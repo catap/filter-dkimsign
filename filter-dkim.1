@@ -1,0 +1,38 @@
+.\"	$OpenBSD$
+.\"
+.\" Copyright (c) 2019 Martijn van Duren <martijn@openbsd.org>
+.\"
+.\" Permission to use, copy, modify, and distribute this software for any
+.\" purpose with or without fee is hereby granted, provided that the above
+.\" copyright notice and this permission notice appear in all copies.
+.\"
+.\" THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+.\" WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+.\" MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+.\" ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+.\" WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+.\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+.\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+.\"
+.Dd $Mdocdate$
+.Dt FILTER-DNSBL 8
+.Os
+.Sh NAME
+.Nm filter-dnsbl
+.Nd block senders based on dnsbl
+.Sh SYNOPSIS
+.Nm
+.Op Fl m
+.Ar blacklist
+.Op Ar ...
+.Sh DESCRIPTION
+.Nm
+looks up the ip-address of the sender at the
+.Ar blacklist
+and by default drops the connection if it is found.
+If the
+.Fl m
+flag is specified it will allow the message to continue, but it will be marked
+with an X-Spam and X-Spam-DNSBL header.
+.Sh SEE ALSO
+.Xr smtpd 8
