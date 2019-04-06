@@ -51,7 +51,7 @@ struct dkim_session {
 	size_t body_whitelines;
 	int has_body;
 	struct dkim_signature signature;
-	EVP_MD_CTX *md_ctx;
+	EVP_MD_CTX *b;
 	RB_ENTRY(dkim_session) entry;
 };
 
@@ -267,17 +267,17 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 		/* Reverse order for ease of use of RFC6367 section 5.4.2 */
 		for (i = 0; session->headers[i] != NULL; i++)
 			continue;
-		if (EVP_DigestSignInit(session->md_ctx, NULL, hash_md, NULL,
+		if (EVP_DigestSignInit(session->b, NULL, hash_md, NULL,
 		    pkey) <= 0) {
 			dkim_errx(session,
 			    "Failed to initialize digest context");
 			return;
 		}
 		for (i--; i >= 0; i--) {
-			if (EVP_DigestSignUpdate(session->md_ctx,
+			if (EVP_DigestSignUpdate(session->b,
 			    session->headers[i],
 			    strlen(session->headers[i])) <= 0 ||
-			    EVP_DigestSignUpdate(session->md_ctx,
+			    EVP_DigestSignUpdate(session->b,
 			    "\r\n", 2) <= 0) {
 				dkim_errx(session,
 				    "Failed to update digest context");
@@ -304,13 +304,13 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 			return;
 		}
 		dkim_parse_header(session, tmp, 1);
-		if (EVP_DigestSignUpdate(session->md_ctx, tmp,
+		if (EVP_DigestSignUpdate(session->b, tmp,
 		    strlen(tmp)) <= 0) {
 			dkim_err(session, "Failed to update digest context");
 			return;
 		}
 		free(tmp);
-		if (EVP_DigestSignFinal(session->md_ctx, NULL, &linelen) <= 0) {
+		if (EVP_DigestSignFinal(session->b, NULL, &linelen) <= 0) {
 			dkim_err(session, "Failed to finalize digest");
 			return;
 		}
@@ -318,7 +318,7 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 			dkim_err(session, "Can't allocate space for digest");
 			return;
 		}
-		if (EVP_DigestSignFinal(session->md_ctx, tmp, &linelen) <= 0) {
+		if (EVP_DigestSignFinal(session->b, tmp, &linelen) <= 0) {
 			dkim_err(session, "Failed to finalize digest");
 			return;
 		}
@@ -394,7 +394,7 @@ dkim_session_new(uint64_t reqid)
 	    domain, selector))
 		return NULL;
 
-	if ((session->md_ctx = EVP_MD_CTX_new()) == NULL) {
+	if ((session->b = EVP_MD_CTX_new()) == NULL) {
 		dkim_errx(session, "Can't create hash context");
 		return NULL;
 	}
@@ -410,7 +410,7 @@ dkim_session_free(struct dkim_session *session)
 
 	RB_REMOVE(dkim_sessions, &dkim_sessions, session);
 	fclose(session->origf);
-	EVP_MD_CTX_free(session->md_ctx);
+	EVP_MD_CTX_free(session->b);
 	free(session->signature.signature);
 	for (i = 0; session->headers[i] != NULL; i++)
 		free(session->headers[i]);
