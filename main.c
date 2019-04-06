@@ -119,13 +119,11 @@ main(int argc, char *argv[])
 		case 'a':
 			if (strncmp(optarg, "rsa-", 4))
 				err(1, "invalid algorithm");
-			if (strcmp(optarg + 4, "sha256") == 0) {
+			if (strcmp(optarg + 4, "sha256") == 0)
 				hashalg = HASH_SHA256;
-				hash_md = EVP_sha256();
-			} else if (strcmp(optarg + 4, "sha1") == 0) {
+			else if (strcmp(optarg + 4, "sha1") == 0)
 				hashalg = HASH_SHA1;
-				hash_md = EVP_sha1();
-			} else
+			else
 				err(1, "invalid algorithm");
 			break;
 		case 'c':
@@ -175,6 +173,10 @@ main(int argc, char *argv[])
 			usage();
 		}
 	}
+	if (hashalg == HASH_SHA1)
+		hash_md = EVP_sha1();
+	else
+		hash_md = EVP_sha256();
 
 	log_init(debug, LOG_MAIL);
 	if (pledge("tmppath stdio", NULL) == -1)
