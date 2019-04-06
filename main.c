@@ -344,7 +344,6 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 			smtp_filter_dataline(session->reqid, session->token,
 			    "%s", tmp);
 		}
-		dkim_session_free(session);
 	} else
 		dkim_parse_body(session, line);
 }
@@ -660,7 +659,7 @@ dkim_signature_normalize(struct dkim_session *session)
 				return 0;
 			memmove(sig + checkpoint + 3,
 			    sig + checkpoint + skip,
-			    *headerlen - skip - checkpoint);
+			    *headerlen - skip - checkpoint + 1);
 			sig[checkpoint + 1] = '\r';
 			sig[checkpoint + 2] = '\n';
 			sig[checkpoint + 3] = '\t';
