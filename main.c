@@ -367,9 +367,8 @@ dkim_session_new(uint64_t reqid)
 	session->signature.len = 0;
 
 	if (!dkim_signature_printf(session,
-	    "DKIM-signature: %s; a=%s-%s; c=%s/%s; d=%s; s=%s; ", "v=1",
-	    cryptalg,
-	    hashalg,
+	    "DKIM-signature: v=%s; a=%s-%s; c=%s/%s; d=%s; s=%s; ", "1",
+	    cryptalg, hashalg,
 	    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
 	    canonbody == CANON_SIMPLE ? "simple" : "relaxed",
 	    domain, selector))
