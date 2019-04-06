@@ -48,10 +48,6 @@ struct dkim_session {
 		SHA_CTX sha1;
 		SHA256_CTX sha256;
 	};
-	/* Use largest hash size her */
-	char bbh[SHA256_DIGEST_LENGTH];
-//	char bh[(((SHA256_DIGEST_LENGTH + 2) / 3) * 4) + 1];
-	char bh[1000];
 	size_t body_whitelines;
 	int has_body;
 	struct dkim_signature signature;
@@ -231,6 +227,10 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 {
 	struct dkim_session *session, search;
 	struct dkim_signature sig;
+	/* Use largest hash size her */
+	char bbh[SHA256_DIGEST_LENGTH];
+	char bh[(((SHA256_DIGEST_LENGTH + 2) / 3) * 4) + 1];
+	char *b;
 	ssize_t i, j;
 	size_t linelen;
 	char *tmp, *tmp2;
@@ -258,12 +258,11 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 			if (dkim_hash_update(session, "\r\n", 2) == 0)
 				return;
 		}
-		if (dkim_hash_final(session, session->bbh) == 0)
+		if (dkim_hash_final(session, bbh) == 0)
 			return;
-		EVP_EncodeBlock(session->bh, session->bbh,
-		    hashalg == HASH_SHA1 ? SHA_DIGEST_LENGTH :
-		    SHA256_DIGEST_LENGTH);
-		if (!dkim_signature_printf(session, "bh=%s; h=", session->bh))
+		EVP_EncodeBlock(bh, bbh, hashalg == HASH_SHA1 ?
+		    SHA_DIGEST_LENGTH : SHA256_DIGEST_LENGTH);
+		if (!dkim_signature_printf(session, "bh=%s; h=", bh))
 			return;
 		/* Reverse order for ease of use of RFC6367 section 5.4.2 */
 		for (i = 0; session->headers[i] != NULL; i++)
@@ -323,9 +322,12 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 			dkim_err(session, "Failed to finalize digest");
 			return;
 		}
-		EVP_EncodeBlock(session->bh, tmp, linelen);
+		/* Lines are unlikely to overflow */
+		b = malloc((((linelen + 2) / 3) * 4) + 1);
+		EVP_EncodeBlock(b, tmp, linelen);
 		free(tmp);
-		dkim_signature_printf(session, "%s\r\n", session->bh);
+		dkim_signature_printf(session, "%s\r\n", b);
+		free(b);
 		dkim_signature_normalize(session);
 		tmp = session->signature.signature;
 		while ((tmp2 = strchr(tmp, '\r')) != NULL) {
@@ -409,9 +411,10 @@ dkim_session_free(struct dkim_session *session)
 
 	RB_REMOVE(dkim_sessions, &dkim_sessions, session);
 	fclose(session->origf);
+	EVP_MD_CTX_free(session->md_ctx);
+	free(session->signature.signature);
 	for (i = 0; session->headers[i] != NULL; i++)
 		free(session->headers[i]);
-	free(session->signature.signature);
 	free(session->headers);
 	free(session);
 }
