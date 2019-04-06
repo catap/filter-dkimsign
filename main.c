@@ -280,6 +280,7 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 			tmp[0] = tmpchar;
 		}
 		dkim_signature_printf(session, "; b=");
+printf("round 1\n");
 		if (!dkim_signature_normalize(session))
 			return;
 		if ((tmp = strdup(session->signature.signature)) == NULL) {
@@ -311,6 +312,7 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 		free(tmp);
 		dkim_signature_printf(session, "%s\r\n", b);
 		free(b);
+printf("round 2\n");
 		dkim_signature_normalize(session);
 		tmp = session->signature.signature;
 		while ((tmp2 = strchr(tmp, '\r')) != NULL) {
@@ -637,9 +639,7 @@ dkim_signature_normalize(struct dkim_session *session)
 			}
 			continue;
 		}
-		if (linelen > DKIM_SIGNATURE_LINELEN + 1) {
-			if (checkpoint == 0)
-				break;
+		if (linelen > DKIM_SIGNATURE_LINELEN + 1 && checkpoint != 0) {
 			for (skip = checkpoint + 1;
 			    sig[skip] == ' ' || sig[skip] == '\t';
 			    skip++)
