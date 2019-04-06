@@ -44,14 +44,11 @@ struct dkim_session {
 	int parsing_headers;
 	char **headers;
 	int lastheader;
-	union {
-		SHA_CTX sha1;
-		SHA256_CTX sha256;
-	};
 	size_t body_whitelines;
 	int has_body;
 	struct dkim_signature signature;
 	EVP_MD_CTX *b;
+	EVP_MD_CTX *bh;
 	RB_ENTRY(dkim_session) entry;
 };
 
@@ -120,9 +117,6 @@ int dkim_signature_printf(struct dkim_session *, char *, ...)
 int dkim_signature_normalize(struct dkim_session *);
 int dkim_signature_need(struct dkim_session *, size_t);
 int dkim_sign_init(struct dkim_session *);
-int dkim_hash_init(struct dkim_session *);
-int dkim_hash_update(struct dkim_session *, char *, size_t);
-int dkim_hash_final(struct dkim_session *, char *);
 
 int
 main(int argc, char *argv[])
@@ -228,8 +222,8 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 	struct dkim_session *session, search;
 	struct dkim_signature sig;
 	/* Use largest hash size her */
-	char bbh[SHA256_DIGEST_LENGTH];
-	char bh[(((SHA256_DIGEST_LENGTH + 2) / 3) * 4) + 1];
+	char bbh[EVP_MAX_MD_SIZE];
+	char bh[(((sizeof(bbh) + 2) / 3) * 4) + 1];
 	char *b;
 	ssize_t i, j;
 	size_t linelen;
@@ -254,25 +248,23 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 	} else if (linelen == 0 && session->parsing_headers) {
 		session->parsing_headers = 0;
 	} else if (line[0] == '.' && line[1] =='\0') {
+		/* This entire section needs an error handling revamp */
 		if (canonbody == CANON_SIMPLE && !session->has_body) {
-			if (dkim_hash_update(session, "\r\n", 2) == 0)
+			if (EVP_DigestUpdate(session->bh, "\r\n", 2) <= 0) {
+				dkim_err(session, "Can't update hash context");
 				return;
+			}
 		}
-		if (dkim_hash_final(session, bbh) == 0)
+		if (EVP_DigestFinal_ex(session->bh, bbh, NULL) == 0) {
+			dkim_err(session, "Can't finalize hash context");
 			return;
-		EVP_EncodeBlock(bh, bbh, hashalg == HASH_SHA1 ?
-		    SHA_DIGEST_LENGTH : SHA256_DIGEST_LENGTH);
+		}
+		EVP_EncodeBlock(bh, bbh, EVP_MD_CTX_size(session->bh));
 		if (!dkim_signature_printf(session, "bh=%s; h=", bh))
 			return;
 		/* Reverse order for ease of use of RFC6367 section 5.4.2 */
 		for (i = 0; session->headers[i] != NULL; i++)
 			continue;
-		if (EVP_DigestSignInit(session->b, NULL, hash_md, NULL,
-		    pkey) <= 0) {
-			dkim_errx(session,
-			    "Failed to initialize digest context");
-			return;
-		}
 		for (i--; i >= 0; i--) {
 			if (EVP_DigestSignUpdate(session->b,
 			    session->headers[i],
@@ -372,8 +364,6 @@ dkim_session_new(uint64_t reqid)
 	}
 	session->parsing_headers = 1;
 
-	if (!dkim_hash_init(session))
-		return NULL;
 	session->body_whitelines = 0;
 	session->headers = calloc(1, sizeof(*(session->headers)));
 	if (session->headers == NULL) {
@@ -394,8 +384,14 @@ dkim_session_new(uint64_t reqid)
 	    domain, selector))
 		return NULL;
 
-	if ((session->b = EVP_MD_CTX_new()) == NULL) {
+	if ((session->b = EVP_MD_CTX_new()) == NULL ||
+	    (session->bh = EVP_MD_CTX_new()) == NULL) {
 		dkim_errx(session, "Can't create hash context");
+		return NULL;
+	}
+	if (EVP_DigestSignInit(session->b, NULL, hash_md, NULL, pkey) <= 0 ||
+	    EVP_DigestInit_ex(session->bh, hash_md, NULL) == 0) {
+		dkim_errx(session, "Failed to initialize hash context");
 		return NULL;
 	}
 	if (RB_INSERT(dkim_sessions, &dkim_sessions, session) != NULL)
@@ -411,6 +407,7 @@ dkim_session_free(struct dkim_session *session)
 	RB_REMOVE(dkim_sessions, &dkim_sessions, session);
 	fclose(session->origf);
 	EVP_MD_CTX_free(session->b);
+	EVP_MD_CTX_free(session->bh);
 	free(session->signature.signature);
 	for (i = 0; session->headers[i] != NULL; i++)
 		free(session->headers[i]);
@@ -590,8 +587,10 @@ dkim_parse_body(struct dkim_session *session, char *line)
 	}
 
 	while (session->body_whitelines--) {
-		if (dkim_hash_update(session, "\r\n", 2) == 0)
+		if (EVP_DigestUpdate(session->bh, "\r\n", 2) == 0) {
+			dkim_err(session, "Can't update hash context");
 			return;
+		}
 	}
 	session->body_whitelines = 0;
 
@@ -611,10 +610,11 @@ dkim_parse_body(struct dkim_session *session, char *line)
 	} else
 		linelen = strlen(line);
 
-	if (dkim_hash_update(session, line, linelen) == 0)
+	if (EVP_DigestUpdate(session->bh, line, linelen) == 0 ||
+	    EVP_DigestUpdate(session->bh, "\r\n", 2) == 0) {
+		dkim_err(session, "Can't update hash context");
 		return;
-	if (dkim_hash_update(session, "\r\n", 2) == 0)
-		return;
+	}
 }
 
 int
@@ -690,57 +690,6 @@ dkim_signature_normalize(struct dkim_session *session)
 				i += 2;
 			} else
 				tag = sig[i];
-		}
-	}
-	return 1;
-}
-
-int
-dkim_hash_init(struct dkim_session *session)
-{
-	if (hashalg == HASH_SHA1) {
-		if (SHA1_Init(&(session->sha1)) == 0) {
-			dkim_errx(session, "Unable to init hash");
-			return 0;
-		}
-	} else {
-		if (SHA256_Init(&(session->sha256)) == 0) {
-			dkim_errx(session, "Unable to init hash");
-			return 0;
-		}
-	}
-	return 1;
-}
-
-int
-dkim_hash_update(struct dkim_session *session, char *buf, size_t len)
-{
-	if (hashalg == HASH_SHA1) {
-		if (SHA1_Update(&(session->sha1), buf, len) == 0) {
-			dkim_errx(session, "Unable to update hash");
-			return 0;
-		}
-	} else {
-		if (SHA256_Update(&(session->sha256), buf, len) == 0) {
-			dkim_errx(session, "Unable to update hash");
-			return 0;
-		}
-	}
-	return 1;
-}
-
-int
-dkim_hash_final(struct dkim_session *session, char *dest)
-{
-	if (hashalg == HASH_SHA1) {
-		if (SHA1_Final(dest, &(session->sha1)) == 0) {
-			dkim_errx(session, "Unable to finalize hash");
-			return 0;
-		}
-	} else {
-		if (SHA256_Final(dest, &(session->sha256)) == 0) {
-			dkim_errx(session, "Unable to finalize hash");
-			return 0;
 		}
 	}
 	return 1;
