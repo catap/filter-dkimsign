@@ -280,7 +280,6 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 			tmp[0] = tmpchar;
 		}
 		dkim_signature_printf(session, "; b=");
-printf("round 1\n");
 		if (!dkim_signature_normalize(session))
 			return;
 		if ((tmp = strdup(session->signature.signature)) == NULL) {
@@ -312,7 +311,6 @@ printf("round 1\n");
 		free(tmp);
 		dkim_signature_printf(session, "%s\r\n", b);
 		free(b);
-printf("round 2\n");
 		dkim_signature_normalize(session);
 		tmp = session->signature.signature;
 		while ((tmp2 = strchr(tmp, '\r')) != NULL) {
