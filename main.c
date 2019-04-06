@@ -16,6 +16,7 @@
 #include <sys/tree.h>
 
 #include <openssl/evp.h>
+#include <openssl/pem.h>
 #include <openssl/sha.h>
 
 #include <ctype.h>
@@ -30,6 +31,12 @@
 #include "log.h"
 #include "smtp_proc.h"
 
+struct dkim_signature {
+	char *signature;
+	size_t size;
+	size_t len;
+};
+
 struct dkim_session {
 	uint64_t reqid;
 	uint64_t token;
@@ -43,9 +50,12 @@ struct dkim_session {
 	};
 	/* Use largest hash size her */
 	char bbh[SHA256_DIGEST_LENGTH];
-	char bh[(((SHA256_DIGEST_LENGTH + 2) / 3) * 4) + 1];
+//	char bh[(((SHA256_DIGEST_LENGTH + 2) / 3) * 4) + 1];
+	char bh[1000];
 	size_t body_whitelines;
 	int has_body;
+	struct dkim_signature signature;
+	EVP_MD_CTX *md_ctx;
 	RB_ENTRY(dkim_session) entry;
 };
 
@@ -68,6 +78,12 @@ static int canonheader = CANON_SIMPLE;
 static int canonbody = CANON_SIMPLE;
 
 static char *domain = NULL;
+static char *selector = NULL;
+
+static EVP_PKEY *pkey;
+static const EVP_MD *hash_md;
+
+#define DKIM_SIGNATURE_LINELEN 78
 
 void usage(void);
 void dkim_err(struct dkim_session *, char *);
@@ -79,9 +95,14 @@ void dkim_disconnect(char *, int, struct timespec *, char *, char *, uint64_t);
 struct dkim_session *dkim_session_new(uint64_t);
 void dkim_session_free(struct dkim_session *);
 int dkim_session_cmp(struct dkim_session *, struct dkim_session *);
-void dkim_parse_header(struct dkim_session *, char *);
+void dkim_parse_header(struct dkim_session *, char *, int);
 void dkim_parse_body(struct dkim_session *, char *);
-void dkim_built_signature(struct dkim_session *);
+int dkim_signature_printf(struct dkim_session *, char *, ...)
+	__attribute__((__format__ (printf, 2, 3)));
+int dkim_signature_normalize(struct dkim_session *);
+int dkim_signature_need(struct dkim_session *, size_t);
+int dkim_sign_init(struct dkim_session *);
+int dkim_hash_init(struct dkim_session *);
 int dkim_hash_update(struct dkim_session *, char *, size_t);
 int dkim_hash_final(struct dkim_session *, char *);
 
@@ -91,17 +112,20 @@ main(int argc, char *argv[])
 	int ch;
 	int i;
 	int debug = 0;
+	FILE *keyfile;
 
-	while ((ch = getopt(argc, argv, "a:c:Dd:h:")) != -1) {
+	while ((ch = getopt(argc, argv, "a:c:Dd:h:k:s:")) != -1) {
 		switch (ch) {
 		case 'a':
 			if (strncmp(optarg, "rsa-", 4))
 				err(1, "invalid algorithm");
-			if (strcmp(optarg + 4, "sha256") == 0)
+			if (strcmp(optarg + 4, "sha256") == 0) {
 				hashalg = HASH_SHA256;
-			else if (strcmp(optarg + 4, "sha1") == 0)
+				hash_md = EVP_sha256();
+			} else if (strcmp(optarg + 4, "sha1") == 0) {
 				hashalg = HASH_SHA1;
-			else
+				hash_md = EVP_sha1();
+			} else
 				err(1, "invalid algorithm");
 			break;
 		case 'c':
@@ -127,14 +151,25 @@ main(int argc, char *argv[])
 			break;
 		case 'd':
 			domain = optarg;
-			if (strlen(domain) > 255)
-				err(1, "Domain too long");
-			break;
-		case 'D':
-			debug = 1;
 			break;
 		case 'h':
 			dkim_headers_set(optarg);
+			break;
+		case 'k':
+			if ((keyfile = fopen(optarg, "r")) == NULL)
+				err(1, "Can't open key file");
+			pkey = PEM_read_PrivateKey(keyfile, NULL, NULL, NULL);
+			if (pkey == NULL)
+				errx(1, "Can't read key file");
+			if (EVP_PKEY_get0_RSA(pkey) == NULL)
+				err(1, "Key is not of type rsa");
+			fclose(keyfile);
+			break;
+		case 's':
+			selector = optarg;
+			break;
+		case 'D':
+			debug = 1;
 			break;
 		default:
 			usage();
@@ -145,7 +180,7 @@ main(int argc, char *argv[])
 	if (pledge("tmppath stdio", NULL) == -1)
 		fatal("pledge");
 
-	if (domain == NULL)
+	if (domain == NULL || selector == NULL || pkey == NULL)
 		usage();
 
 	smtp_register_filter_dataline(dkim_dataline);
@@ -171,23 +206,27 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
     char *phase, uint64_t reqid, uint64_t token, char *line)
 {
 	struct dkim_session *session, search;
-	size_t i;
+	struct dkim_signature sig;
+	ssize_t i, j;
 	size_t linelen;
+	char *tmp, *tmp2;
+	char tmpchar;
 
 	search.reqid = reqid;
 	session = RB_FIND(dkim_sessions, &dkim_sessions, &search);
 	if (session == NULL) {
-		session = dkim_session_new(reqid);
+		if ((session = dkim_session_new(reqid)) == NULL)
+			return;
 		session->token = token;
 	} else if (session->token != token)
 		fatalx("Token incorrect");
 
 	linelen = strlen(line);
-	if (fwrite(line, 1, linelen, session->origf) < linelen)
+	if (fprintf(session->origf, "%s\r\n", line) < linelen)
 		dkim_err(session, "Couldn't write to tempfile");
 
 	if (linelen !=  0 && session->parsing_headers) {
-		dkim_parse_header(session, line);
+		dkim_parse_header(session, line, 0);
 	} else if (linelen == 0 && session->parsing_headers) {
 		session->parsing_headers = 0;
 	} else if (line[0] == '.' && line[1] =='\0') {
@@ -200,7 +239,85 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 		EVP_EncodeBlock(session->bh, session->bbh,
 		    hashalg == HASH_SHA1 ? SHA_DIGEST_LENGTH :
 		    SHA256_DIGEST_LENGTH);
-		dkim_built_signature(session);
+		if (!dkim_signature_printf(session, "bh=%s; h=", session->bh))
+			return;
+		/* Reverse order for ease of use of RFC6367 section 5.4.2 */
+		for (i = 0; session->headers[i] != NULL; i++)
+			continue;
+		if (EVP_DigestSignInit(session->md_ctx, NULL, hash_md, NULL,
+		    pkey) <= 0) {
+			dkim_errx(session,
+			    "Failed to initialize digest context");
+			return;
+		}
+		for (i--; i >= 0; i--) {
+			if (EVP_DigestSignUpdate(session->md_ctx,
+			    session->headers[i],
+			    strlen(session->headers[i])) <= 0 ||
+			    EVP_DigestSignUpdate(session->md_ctx,
+			    "\r\n", 2) <= 0) {
+				dkim_errx(session,
+				    "Failed to update digest context");
+				return;
+			}
+			/* We're done with the cashed header after hashing */
+			for (tmp = session->headers[i]; tmp[0] != ':'; tmp++) {
+				if (tmp[0] == ' ' || tmp[0] == '\t')
+					break;
+				tmp[0] = tolower(tmp[0]);
+			}
+			tmp[0] = '\0';
+			if (!dkim_signature_printf(session, "%s%s",
+			    session->headers[i + 1] == NULL  ? "" : ":",
+			    session->headers[i]))
+				return;
+			tmp[0] = tmpchar;
+		}
+		dkim_signature_printf(session, "; b=");
+		if (!dkim_signature_normalize(session))
+			return;
+		if ((tmp = strdup(session->signature.signature)) == NULL) {
+			dkim_err(session, "Can't create DKIM signature");
+			return;
+		}
+		dkim_parse_header(session, tmp, 1);
+		if (EVP_DigestSignUpdate(session->md_ctx, tmp,
+		    strlen(tmp)) <= 0) {
+			dkim_err(session, "Failed to update digest context");
+			return;
+		}
+		free(tmp);
+		if (EVP_DigestSignFinal(session->md_ctx, NULL, &linelen) <= 0) {
+			dkim_err(session, "Failed to finalize digest");
+			return;
+		}
+		if ((tmp = malloc(linelen)) == NULL) {
+			dkim_err(session, "Can't allocate space for digest");
+			return;
+		}
+		if (EVP_DigestSignFinal(session->md_ctx, tmp, &linelen) <= 0) {
+			dkim_err(session, "Failed to finalize digest");
+			return;
+		}
+		EVP_EncodeBlock(session->bh, tmp, linelen);
+		free(tmp);
+		dkim_signature_printf(session, "%s\r\n", session->bh);
+		dkim_signature_normalize(session);
+		tmp = session->signature.signature;
+		while ((tmp2 = strchr(tmp, '\r')) != NULL) {
+			tmp2[0] = '\0';
+			smtp_filter_dataline(session->reqid, session->token,
+			    "%s", tmp);
+			tmp = tmp2 + 2;
+		}
+		tmp = NULL;
+		linelen = 0;
+		rewind(session->origf);
+		while ((i = getline(&tmp, &linelen, session->origf)) != -1) {
+			tmp[i - 1] = '\0';
+			smtp_filter_dataline(session->reqid, session->token,
+			    "%s", tmp);
+		}
 	} else
 		dkim_parse_body(session, line);
 }
@@ -209,6 +326,7 @@ struct dkim_session *
 dkim_session_new(uint64_t reqid)
 {
 	struct dkim_session *session;
+	struct dkim_signature *signature;
 	char origfile[] = "/tmp/filter-dkimXXXXXX";
 	int fd;
 
@@ -228,10 +346,8 @@ dkim_session_new(uint64_t reqid)
 	}
 	session->parsing_headers = 1;
 
-	if (hashalg == HASH_SHA1)
-		SHA1_Init(&(session->sha1));
-	else
-		SHA256_Init(&(session->sha256));
+	if (!dkim_hash_init(session))
+		return NULL;
 	session->body_whitelines = 0;
 	session->headers = calloc(1, sizeof(*(session->headers)));
 	if (session->headers == NULL) {
@@ -239,7 +355,23 @@ dkim_session_new(uint64_t reqid)
 		return NULL;
 	}
 	session->lastheader = 0;
+	session->signature.signature = NULL;
+	session->signature.size = 0;
+	session->signature.len = 0;
 
+	if (!dkim_signature_printf(session,
+	    "DKIM-signature: %s; a=%s-%s; c=%s/%s; d=%s; s=%s; ", "v=1",
+	    cryptalg == CRYPT_RSA ? "rsa" : "",
+	    hashalg == HASH_SHA1 ? "sha1" : "sha256",
+	    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
+	    canonbody == CANON_SIMPLE ? "simple" : "relaxed",
+	    domain, selector))
+		return NULL;
+
+	if ((session->md_ctx = EVP_MD_CTX_new()) == NULL) {
+		dkim_errx(session, "Can't create hash context");
+		return NULL;
+	}
 	if (RB_INSERT(dkim_sessions, &dkim_sessions, session) != NULL)
 		fatalx("session already registered");
 	return session;
@@ -254,6 +386,7 @@ dkim_session_free(struct dkim_session *session)
 	fclose(session->origf);
 	for (i = 0; session->headers[i] != NULL; i++)
 		free(session->headers[i]);
+	free(session->signature.signature);
 	free(session->headers);
 	free(session);
 }
@@ -272,7 +405,6 @@ dkim_headers_set(char *headers)
 
 	nsign_headers = 1;
 
-	/* We don't support FWS for the -h flag */
 	for (i = 0; headers[i] != '\0'; i++) {
 		/* RFC 5322 field-name */
 		if (!(headers[i] >= 33 && headers[i] <= 126))
@@ -288,7 +420,7 @@ dkim_headers_set(char *headers)
 	if (headers[i - 1] == ':')
 		errx(1, "-h: header can't be empty");
 
-	sign_headers = reallocarray(NULL, nsign_headers, sizeof(*sign_headers));
+	sign_headers = reallocarray(NULL, nsign_headers + 1, sizeof(*sign_headers));
 	if (sign_headers == NULL)
 		errx(1, NULL);
 
@@ -324,12 +456,13 @@ dkim_errx(struct dkim_session *session, char *msg)
 }
 
 void
-dkim_parse_header(struct dkim_session *session, char *line)
+dkim_parse_header(struct dkim_session *session, char *line, int force)
 {
 	size_t i;
 	size_t r, w;
 	size_t linelen;
 	size_t lastheader;
+	size_t hlen;
 	int fieldname;
 	char **mtmp;
 	char *htmp;
@@ -337,16 +470,19 @@ dkim_parse_header(struct dkim_session *session, char *line)
 	if ((line[0] == ' ' || line[0] == '\t') && !session->lastheader)
 		return;
 	if ((line[0] != ' ' && line[0] != '\t')) {
+		session->lastheader = 0;
 		for (i = 0; i < nsign_headers; i++) {
-			if (strncasecmp(line, sign_headers[i],
-			    strlen(sign_headers[i])) == 0) {
+			hlen = strlen(sign_headers[i]);
+			if  (strncasecmp(line, sign_headers[i], hlen) == 0) {
+				while (line[hlen] == ' ' || line[hlen] == '\t')
+					hlen++;
+				if (line[hlen] != ':')
+					continue;
 				break;
 			}
 		}
-		if (i == nsign_headers) {
-			session->lastheader = 0;
+		if (i == nsign_headers && !force)
 			return;
-		}
 	}
 
 	if (canonheader == CANON_RELAXED) {
@@ -363,7 +499,8 @@ dkim_parse_header(struct dkim_session *session, char *line)
 					r++;
 				continue;
 			}
-			if (line[r] == ' ' || line[r] == '\t') {
+			if (line[r] == ' ' || line[r] == '\t' ||
+			    line[r] == '\r' || line[r] == '\n') {
 				if (r != 0 && line[w - 1] == ' ')
 					continue;
 				else
@@ -453,43 +590,99 @@ dkim_parse_body(struct dkim_session *session, char *line)
 		return;
 }
 
-void
-dkim_built_signature(struct dkim_session *session)
+int
+dkim_signature_normalize(struct dkim_session *session)
 {
-	char *signature;
-	size_t signaturesize = 1024;
-	size_t signaturelen = 0;
-	size_t linelen = 0;
-	size_t ncopied;
+	size_t i;
+	size_t linelen;
+	size_t checkpoint;
+	size_t skip;
+	size_t *headerlen = &(session->signature.len);
+	int headername = 1;
+	char tag = '\0';
+	char *sig = session->signature.signature;
 
-	if ((signature = malloc(signaturesize)) == NULL) {
-		dkim_err(session, "Can't create signature");
-		return;
-	}
-
-	do {
-		ncopied = strlcpy(signature, "DKIM-Signature: v=1; a=",
-		    signaturesize);
-	if (ncopied >= signaturesize)
-	if (cryptalg == CRYPT_RSA)
-		(void) strlcat(signature, "rsa", signaturesize);
-	if (hashalg == HASH_SHA1)
-		(void) strlcat(signature, "-sha1; ", signaturesize);
-	else
-		(void) strlcat(signature, "-sha256; ", signaturesize);
-	if (canonheader != CANON_SIMPLE || canonbody != CANON_SIMPLE) {
-		if (canonheader == CANON_SIMPLE)
-			(void) strlcat(signature, "c=simple", signaturesize);
+	for (linelen = i = 0; sig[i] != '\0'; i++) {
+		if (sig[i] == '\n') {
+			checkpoint = 0;
+			linelen = 0;
+			continue;
+		}
+		if (sig[i] == '\t')
+			linelen = (linelen + 8) & ~7;
 		else
-			(void) strlcat(signature, "c=relaxed", signaturesize);
+			linelen++;
+		if (headername) {
+			if (sig[i] == ':') {
+				headername = 0;
+				checkpoint = i;
+			}
+			continue;
+		}
+		if (linelen > DKIM_SIGNATURE_LINELEN) {
+			if (checkpoint == 0)
+				break;
+			for (skip = checkpoint + 1;
+			    sig[skip] == ' ' || sig[skip] == '\t';
+			    skip++)
+				continue;
+			skip -= checkpoint + 1;
+			if (!dkim_signature_need(session,
+			    skip > 3 ? 0 : 3 - skip))
+				return 0;
+			memmove(sig + checkpoint + 3,
+			    sig + checkpoint + skip,
+			    *headerlen - skip - checkpoint);
+			sig[checkpoint + 1] = '\r';
+			sig[checkpoint + 2] = '\n';
+			sig[checkpoint + 3] = '\t';
+			linelen = 8;
+			*headerlen = *headerlen + 3 - skip;
+			i = checkpoint + 3;
+			checkpoint = 0;
+		}
+		if (sig[i] == ';') {
+			checkpoint = i;
+			tag = '\0';
+			continue;
+		}
+		switch (tag) {
+		case 'B':
+		case 'b':
+			checkpoint = i;
+			break;
+		case 'h':
+			if (sig[i] == ':')
+				checkpoint = i;
+		}
+		if (tag == '\0' && sig[i] != ' ' && sig[i] != '\t') {
+			if ((tag = sig[i]) == 'b' && sig[i + 1] == 'h' &&
+			    sig[i + 2] == '=') {
+				tag = 'B';
+				linelen += 2;
+				i += 2;
+			} else
+				tag = sig[i];
+		}
 	}
-	if (canonbody != CANON_SIMPLE)
-		(void) strlcat(signature, "/relaxed", signaturesize);
+	return 1;
+}
 
-	(void) strlcat(signature, "d=", signaturesize);
-	(void) strlcat(signature, domain, signaturesize);
-	(void) strlcat(signature, "; ", signaturesize);
-	printf("%s\n", signature);
+int
+dkim_hash_init(struct dkim_session *session)
+{
+	if (hashalg == HASH_SHA1) {
+		if (SHA1_Init(&(session->sha1)) == 0) {
+			dkim_errx(session, "Unable to init hash");
+			return 0;
+		}
+	} else {
+		if (SHA256_Init(&(session->sha256)) == 0) {
+			dkim_errx(session, "Unable to init hash");
+			return 0;
+		}
+	}
+	return 1;
 }
 
 int
@@ -523,6 +716,48 @@ dkim_hash_final(struct dkim_session *session, char *dest)
 			return 0;
 		}
 	}
+	return 1;
+}
+
+int
+dkim_signature_printf(struct dkim_session *session, char *fmt, ...)
+{
+	struct dkim_signature *sig = &(session->signature);
+	va_list ap;
+	size_t newlen;
+	char *tmp;
+	size_t len;
+
+	va_start(ap, fmt);
+	if ((len = vsnprintf(sig->signature + sig->len, sig->size - sig->len,
+	    fmt, ap)) >= sig->size - sig->len) {
+		va_end(ap);
+		if (!dkim_signature_need(session, len))
+			return 0;
+		va_start(ap, fmt);
+		if ((len = vsnprintf(sig->signature + sig->len, sig->size - sig->len,
+		    fmt, ap)) >= sig->size - sig->len)
+			fatalx("Miscalculated header size");
+	}
+	sig->len += len;
+	va_end(ap);
+	return 1;
+}
+
+int
+dkim_signature_need(struct dkim_session *session, size_t len)
+{
+	struct dkim_signature *sig = &(session->signature);
+	char *tmp;
+
+	if (sig->len + len <= sig->size)
+		return 1;
+	sig->size = (((len + sig->len - sig->size) / 512) + 1) * 512;
+	if ((tmp = realloc(sig->signature, sig->size)) == NULL) {
+		dkim_err(session, "No room for signature");
+		return 0;
+	}
+	sig->signature = tmp;
 	return 1;
 }
 
