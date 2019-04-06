@@ -646,7 +646,7 @@ dkim_signature_normalize(struct dkim_session *session)
 			}
 			continue;
 		}
-		if (linelen > DKIM_SIGNATURE_LINELEN) {
+		if (linelen > DKIM_SIGNATURE_LINELEN + 1) {
 			if (checkpoint == 0)
 				break;
 			for (skip = checkpoint + 1;
