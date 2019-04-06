@@ -62,8 +62,30 @@ struct dkim_session {
 RB_HEAD(dkim_sessions, dkim_session) dkim_sessions = RB_INITIALIZER(NULL);
 RB_PROTOTYPE(dkim_sessions, dkim_session, entry, dkim_session_cmp);
 
-static char **sign_headers = NULL;
-static size_t nsign_headers = 0;
+/* RFC 6376 section 5.4.1 */
+static char *dsign_headers[] = {
+	"from",
+	"reply-to",
+	"subject",
+	"date",
+	"to",
+	"cc",
+	"resent-date",
+	"resent-from",
+	"resent-to",
+	"resent-cc",
+	"in-reply-to",
+	"references",
+	"list-id",
+	"list-help",
+	"list-unsubscribe",
+	"list-subscribe",
+	"list-post",
+	"list-owner",
+	"list-archive"
+};
+static char **sign_headers = dsign_headers;
+static size_t nsign_headers = sizeof(dsign_headers) / sizeof(*dsign_headers);
 
 #define HASH_SHA1 0
 #define HASH_SHA256 1
