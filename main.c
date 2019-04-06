@@ -342,6 +342,7 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 			smtp_filter_dataline(session->reqid, session->token,
 			    "%s", tmp);
 		}
+		dkim_session_free(session);
 	} else
 		dkim_parse_body(session, line);
 }
