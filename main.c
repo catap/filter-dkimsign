@@ -789,7 +789,8 @@ dkim_signature_need(struct dkim_session *session, size_t len)
 __dead void
 usage(void)
 {
-	fprintf(stderr, "usage: %s [-a signalg] [-c canonicalization] -d domain -h headerfields\n", getprogname());
+	fprintf(stderr, "usage: %s [-a signalg] [-c canonicalization] [-h headerfields] -d domain -k keyfile "
+	    "-s selector\n", getprogname());
 	exit(1);
 }
 
