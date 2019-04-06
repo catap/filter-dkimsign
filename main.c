@@ -80,12 +80,8 @@ static char *dsign_headers[] = {
 static char **sign_headers = dsign_headers;
 static size_t nsign_headers = sizeof(dsign_headers) / sizeof(*dsign_headers);
 
-#define HASH_SHA1 0
-#define HASH_SHA256 1
-static int hashalg = HASH_SHA256;
-
-#define CRYPT_RSA 0
-static int cryptalg = CRYPT_RSA;
+static char *hashalg = "sha256";
+static char *cryptalg = "rsa";
 
 #define CANON_SIMPLE 0
 #define CANON_RELAXED 1
@@ -129,14 +125,9 @@ main(int argc, char *argv[])
 	while ((ch = getopt(argc, argv, "a:c:Dd:h:k:s:")) != -1) {
 		switch (ch) {
 		case 'a':
-			if (strncmp(optarg, "rsa-", 4))
+			if (strncmp(optarg, "rsa-", 4) != 0)
 				err(1, "invalid algorithm");
-			if (strcmp(optarg + 4, "sha256") == 0)
-				hashalg = HASH_SHA256;
-			else if (strcmp(optarg + 4, "sha1") == 0)
-				hashalg = HASH_SHA1;
-			else
-				err(1, "invalid algorithm");
+			hashalg = optarg + 4;
 			break;
 		case 'c':
 			if (strncmp(optarg, "simple", 6) == 0) {
@@ -185,12 +176,12 @@ main(int argc, char *argv[])
 			usage();
 		}
 	}
-	if (hashalg == HASH_SHA1)
-		hash_md = EVP_sha1();
-	else
-		hash_md = EVP_sha256();
-
 	log_init(debug, LOG_MAIL);
+
+	OpenSSL_add_all_digests();
+	if ((hash_md = EVP_get_digestbyname(hashalg)) == NULL)
+		fatalx("Can't find hash: %s", hashalg);
+
 	if (pledge("tmppath stdio", NULL) == -1)
 		fatal("pledge");
 
@@ -377,8 +368,8 @@ dkim_session_new(uint64_t reqid)
 
 	if (!dkim_signature_printf(session,
 	    "DKIM-signature: %s; a=%s-%s; c=%s/%s; d=%s; s=%s; ", "v=1",
-	    cryptalg == CRYPT_RSA ? "rsa" : "",
-	    hashalg == HASH_SHA1 ? "sha1" : "sha256",
+	    cryptalg,
+	    hashalg,
 	    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
 	    canonbody == CANON_SIMPLE ? "simple" : "relaxed",
 	    domain, selector))
