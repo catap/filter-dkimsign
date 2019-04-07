@@ -15,24 +15,50 @@
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
 .Dd $Mdocdate$
-.Dt FILTER-DNSBL 8
+.Dt FILTER-DKIM 8
 .Os
 .Sh NAME
-.Nm filter-dnsbl
-.Nd block senders based on dnsbl
+.Nm filter-dkim
+.Nd add dkim signature to messages
 .Sh SYNOPSIS
 .Nm
-.Op Fl m
-.Ar blacklist
-.Op Ar ...
+.Op Fl a Ar algorithm
+.Op Fl c Ar canonicalization
+.Op Fl h Ar headers
+.Fl d Ar domain
+.Fl k Ar file
+.Fl s Ar selector
 .Sh DESCRIPTION
 .Nm
-looks up the ip-address of the sender at the
-.Ar blacklist
-and by default drops the connection if it is found.
-If the
-.Fl m
-flag is specified it will allow the message to continue, but it will be marked
-with an X-Spam and X-Spam-DNSBL header.
+adds a dkim signature to the message.
+The following flags are supported:
+.Bl -tag -width Ds
+.It Fl a
+The algorithm to use.
+This implementation only supports rsa cryptography.
+Only sha1 and sha256 should be used for hashing, since other algorithms are most
+likely not supported by verifiers.
+Defaults to
+.Ar rsa-sha256 .
+.It Fl c
+The canonicalization algorithm used to sign the messge.
+Defaults to
+.Ar simple/simple .
+.It Fl d
+The domain where the public key can be found.
+.It Fl h
+The email headers which are included in the mail signature.
+Per RFC this option requires at least the from header to be included.
+The headers are specified by separating them with a colon.
+The default is
+Ar from:reply-to:subject:date:to:cc:resent-date:resent-from:resent-to:resent-cc:in-reply-to:references:list-id:list-help:list-unsubscribe:list-subscribe:list-post:list-owner:list-archive .
+.It Fl k
+.Ar file
+should point to a file containing the RSA private key to sign the messages.
+.It Fl s
+The selector within the _domainkey subdomain of
+.Ar domain
+where the public key can be found.
+.El
 .Sh SEE ALSO
 .Xr smtpd 8
