@@ -644,7 +644,7 @@ dkim_signature_normalize(struct dkim_session *session)
 				continue;
 			skip -= checkpoint + 1;
 			if (!dkim_signature_need(session,
-			    skip > 3 ? 0 : 3 - skip))
+			    skip > 3 ? 0 : 3 - skip + 1))
 				return 0;
 			memmove(sig + checkpoint + 3,
 			    sig + checkpoint + skip,
@@ -697,7 +697,7 @@ dkim_signature_printf(struct dkim_session *session, char *fmt, ...)
 	if ((len = vsnprintf(sig->signature + sig->len, sig->size - sig->len,
 	    fmt, ap)) >= sig->size - sig->len) {
 		va_end(ap);
-		if (!dkim_signature_need(session, len))
+		if (!dkim_signature_need(session, len + 1))
 			return 0;
 		va_start(ap, fmt);
 		if ((len = vsnprintf(sig->signature + sig->len, sig->size - sig->len,
