@@ -200,8 +200,6 @@ smtp_newline(int fd, short event, void *arg)
 	int i;
 
 	while ((linelen = smtp_getline(&line, &linesize)) > 0) {
-		fprintf(stderr, "%s\n", line);
-		fflush(stderr);
 		if (dupsize < linesize) {
 			if ((linedup = realloc(linedup, linesize)) == NULL)
 				fatal(NULL);
