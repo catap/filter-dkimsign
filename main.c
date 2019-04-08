@@ -717,7 +717,7 @@ dkim_signature_need(struct dkim_session *session, size_t len)
 
 	if (sig->len + len < sig->size)
 		return 1;
-	sig->size = (((len + sig->len - sig->size) / 512) + 1) * 512;
+	sig->size = (((len + sig->len) / 512) + 1) * 512;
 	if ((tmp = realloc(sig->signature, sig->size)) == NULL) {
 		dkim_err(session, "No room for signature");
 		return 0;
