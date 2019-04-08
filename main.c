@@ -503,7 +503,7 @@ dkim_parse_header(struct dkim_session *session, char *line, int force)
 	if (canonheader == CANON_RELAXED) {
 		fieldname = 1;
 		for (r = w = 0; line[r] != '\0'; r++) {
-			if (line[r] == ':') {
+			if (line[r] == ':' && fieldname) {
 				if (line[w - 1] == ' ')
 					line[w - 1] = ':';
 				else
