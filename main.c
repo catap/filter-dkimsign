@@ -646,6 +646,8 @@ dkim_signature_normalize(struct dkim_session *session)
 			if (!dkim_signature_need(session,
 			    skip > 3 ? 0 : 3 - skip + 1))
 				return 0;
+			sig = session->signature.signature;
+			
 			memmove(sig + checkpoint + 3,
 			    sig + checkpoint + skip,
 			    *headerlen - skip - checkpoint + 1);
