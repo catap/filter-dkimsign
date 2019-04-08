@@ -534,8 +534,8 @@ dkim_parse_header(struct dkim_session *session, char *line, int force)
 	for (lastheader = 0; session->headers[lastheader] != NULL; lastheader++)
 		continue;
 	if (!session->lastheader) {
-		mtmp = reallocarray(session->headers, lastheader + 1,
-		    sizeof(*mtmp));
+		mtmp = recallocarray(session->headers, lastheader + 1,
+		    lastheader + 2, sizeof(*mtmp));
 		if (mtmp == NULL) {
 			dkim_err(session, "Can't store header");
 			return;
