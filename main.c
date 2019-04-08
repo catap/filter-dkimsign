@@ -486,6 +486,7 @@ dkim_parse_header(struct dkim_session *session, char *line, int force)
 	int fieldname = 0;
 	char **mtmp;
 	char *htmp;
+	char *tmp;
 
 	if ((line[0] == ' ' || line[0] == '\t') && !session->lastheader)
 		return;
@@ -567,7 +568,11 @@ dkim_parse_header(struct dkim_session *session, char *line, int force)
 		if (canonheader == CANON_SIMPLE) {
 			if (strlcat(htmp, "\r\n", linelen) >= linelen)
 				fatalx("Missized header");
-		}
+		} else if (canonheader == CANON_RELAXED &&
+		    (tmp = strchr(session->headers[lastheader], ':')) != NULL &&
+		    tmp[1] == '\0')
+			line++;
+
 		if (strlcat(htmp, line, linelen) >= linelen)
 			fatalx("Missized header");
 	}
