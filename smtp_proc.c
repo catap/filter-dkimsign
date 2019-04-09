@@ -371,7 +371,7 @@ smtp_vprintf(const char *fmt, va_list ap)
 		buf.buf = reallocarray(buf.buf, buf.bufsize,
 		    sizeof(*(buf.buf)));
 		if (buf.buf == NULL)
-			fatalx(NULL);
+			fatal(NULL);
 		fmtlen = vsnprintf(buf.buf + buf.buflen,
 		    buf.bufsize - buf.buflen, fmt, cap);
 		if (fmtlen == -1)
@@ -394,8 +394,6 @@ smtp_write(int fd, short event, void *arg)
 
 	if (buf->buflen == 0)
 		return;
-	if (event_pending(&stdoutev, EV_WRITE, NULL))
-		return;
 	if (!evset) {
 		event_set(&stdoutev, fd, EV_WRITE, smtp_write, buf);
 		evset = 1;
@@ -412,6 +410,8 @@ smtp_write(int fd, short event, void *arg)
 		event_add(&stdoutev, NULL);
 	}
 	buf->buflen -= wlen;
+	if (buf->buflen == 0 && event_pending(&stdoutev, EV_WRITE, NULL))
+		event_del(&stdoutev);
 }
 
 void
