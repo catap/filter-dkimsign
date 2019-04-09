@@ -231,7 +231,7 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 		fatalx("Token incorrect");
 
 	linelen = strlen(line);
-	if (fprintf(session->origf, "%s\r\n", line) < linelen)
+	if (fprintf(session->origf, "%s\n", line) < linelen)
 		dkim_err(session, "Couldn't write to tempfile");
 
 	 if (line[0] == '.' && line[1] =='\0') {
