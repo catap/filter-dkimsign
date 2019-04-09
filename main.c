@@ -634,7 +634,8 @@ dkim_signature_normalize(struct dkim_session *session)
 	char *sig = session->signature.signature;
 
 	for (linelen = i = 0; sig[i] != '\0'; i++) {
-		if (sig[i] == '\n') {
+		if (sig[i] == '\r' && sig[i + 1] == '\n') {
+			i++;
 			checkpoint = 0;
 			linelen = 0;
 			continue;
@@ -650,7 +651,7 @@ dkim_signature_normalize(struct dkim_session *session)
 			}
 			continue;
 		}
-		if (linelen > DKIM_SIGNATURE_LINELEN + 1 && checkpoint != 0) {
+		if (linelen > DKIM_SIGNATURE_LINELEN && checkpoint != 0) {
 			for (skip = checkpoint + 1;
 			    sig[skip] == ' ' || sig[skip] == '\t';
 			    skip++)
