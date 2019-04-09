@@ -21,6 +21,7 @@
 
 #include <ctype.h>
 #include <err.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -583,20 +584,7 @@ dkim_parse_body(struct dkim_session *session, char *line)
 {
 	size_t r, w;
 	size_t linelen;
-	if (line[0] == '\0') {
-		session->body_whitelines++;
-		return;
-	}
 
-	while (session->body_whitelines--) {
-		if (EVP_DigestUpdate(session->bh, "\r\n", 2) == 0) {
-			dkim_err(session, "Can't update hash context");
-			return;
-		}
-	}
-	session->body_whitelines = 0;
-
-	session->has_body = 1;
 	if (canonbody == CANON_RELAXED) {
 		for (r = w = 0; line[r] != '\0'; r++) {
 			if (line[r] == ' ' || line[r] == '\t') {
@@ -611,6 +599,20 @@ dkim_parse_body(struct dkim_session *session, char *line)
 		line[linelen] = '\0';
 	} else
 		linelen = strlen(line);
+
+	if (line[0] == '\0') {
+		session->body_whitelines++;
+		return;
+	}
+
+	while (session->body_whitelines--) {
+		if (EVP_DigestUpdate(session->bh, "\r\n", 2) == 0) {
+			dkim_err(session, "Can't update hash context");
+			return;
+		}
+	}
+	session->body_whitelines = 0;
+	session->has_body = 1;
 
 	if (EVP_DigestUpdate(session->bh, line, linelen) == 0 ||
 	    EVP_DigestUpdate(session->bh, "\r\n", 2) == 0) {
