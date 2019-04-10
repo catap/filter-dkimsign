@@ -599,6 +599,9 @@ dkim_parse_body(struct dkim_session *session, char *line)
 		line[linelen] = '\0';
 	} else
 		linelen = strlen(line);
+	for (; line[linelen - 1] == '\r'; linelen--)
+		continue;
+	line[linelen] = '\0';
 
 	if (line[0] == '\0') {
 		session->body_whitelines++;
