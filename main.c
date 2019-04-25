@@ -183,7 +183,11 @@ main(int argc, char *argv[])
 	if ((hash_md = EVP_get_digestbyname(hashalg)) == NULL)
 		fatalx("Can't find hash: %s", hashalg);
 
-	if (pledge("tmppath stdio", NULL) == -1)
+	/*
+	 * fattr required for tmpfile.
+	 * Can hopefully be removed in the future
+	 */
+	if (pledge("fattr tmppath stdio", NULL) == -1)
 		fatal("pledge");
 
 	if (domain == NULL || selector == NULL || pkey == NULL)
@@ -343,20 +347,12 @@ dkim_session_new(uint64_t reqid)
 {
 	struct dkim_session *session;
 	struct dkim_signature *signature;
-	char origfile[] = "/tmp/filter-dkimXXXXXX";
-	int fd;
 
 	if ((session = calloc(1, sizeof(*session))) == NULL)
 		fatal(NULL);
 
 	session->reqid = reqid;
-	if ((fd = mkstemp(origfile)) == -1) {
-		dkim_err(session, "Can't open tempfile");
-		return NULL;
-	}
-	if (unlink(origfile) == -1)
-		log_warn("Failed to unlink tempfile %s", origfile);
-	if ((session->origf = fdopen(fd, "r+")) == NULL) {
+	if ((session->origf = tmpfile()) == NULL) {
 		dkim_err(session, "Can't open tempfile");
 		return NULL;
 	}
