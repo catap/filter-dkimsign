@@ -48,6 +48,7 @@ struct dkim_session {
 	size_t body_whitelines;
 	int has_body;
 	struct dkim_signature signature;
+	int err;
 	EVP_MD_CTX *b;
 	EVP_MD_CTX *bh;
 	RB_ENTRY(dkim_session) entry;
@@ -103,6 +104,8 @@ void dkim_errx(struct dkim_session *, char *);
 void dkim_headers_set(char *);
 void dkim_dataline(char *, int, struct timespec *, char *, char *, uint64_t,
     uint64_t, char *);
+void dkim_commit(char *, int, struct timespec *, char *, char *, uint64_t,
+    uint64_t);
 void dkim_disconnect(char *, int, struct timespec *, char *, char *, uint64_t);
 struct dkim_session *dkim_session_new(uint64_t);
 void dkim_session_free(struct dkim_session *);
@@ -194,6 +197,7 @@ main(int argc, char *argv[])
 		usage();
 
 	smtp_register_filter_dataline(dkim_dataline);
+	smtp_register_filter_commit(dkim_commit);
 	smtp_in_register_report_disconnect(dkim_disconnect);
 	smtp_run(debug);
 
@@ -234,6 +238,8 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 		session->token = token;
 	} else if (session->token != token)
 		fatalx("Token incorrect");
+	if (session->err)
+		return;
 
 	linelen = strlen(line);
 	if (fprintf(session->origf, "%s\n", line) < linelen)
@@ -328,7 +334,6 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 			smtp_filter_dataline(session->reqid, session->token,
 			    "%s", tmp);
 		}
-		dkim_session_free(session);
 	} else if (linelen !=  0 && session->parsing_headers) {
 		if (line[0] == '.')
 			line++;
@@ -340,6 +345,25 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 			line++;
 		dkim_parse_body(session, line);
 	}
+}
+
+void
+dkim_commit(char *type, int version, struct timespec *tm, char *direction,
+    char *phase, uint64_t reqid, uint64_t token)
+{
+	struct dkim_session *session, search;
+
+	search.reqid = reqid;
+	if ((session = RB_FIND(dkim_sessions, &dkim_sessions, &search)) == NULL)
+		fatalx("Commit on undefined session");
+
+	if (session->err)
+		smtp_filter_disconnect(session->reqid, session->token,
+		    "Internal server error");
+	else
+		smtp_filter_proceed(reqid, token);
+
+	dkim_session_free(session);
 }
 
 struct dkim_session *
@@ -368,6 +392,7 @@ dkim_session_new(uint64_t reqid)
 	session->signature.signature = NULL;
 	session->signature.size = 0;
 	session->signature.len = 0;
+	session->err = 0;
 
 	if (!dkim_signature_printf(session,
 	    "DKIM-signature: v=%s; a=%s-%s; c=%s/%s; d=%s; s=%s; ", "1",
@@ -457,19 +482,15 @@ dkim_headers_set(char *headers)
 void
 dkim_err(struct dkim_session *session, char *msg)
 {
-	smtp_filter_disconnect(session->reqid, session->token,
-	    "Internal server error");
+	session->err = 1;
 	log_warn("%s", msg);
-	dkim_session_free(session);
 }
 
 void
 dkim_errx(struct dkim_session *session, char *msg)
 {
-	smtp_filter_disconnect(session->reqid, session->token,
-	    "Internal server error");
+	session->err = 1;
 	log_warnx("%s", msg);
-	dkim_session_free(session);
 }
 
 void
