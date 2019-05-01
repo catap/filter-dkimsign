@@ -239,7 +239,7 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 	if (fprintf(session->origf, "%s\n", line) < linelen)
 		dkim_err(session, "Couldn't write to tempfile");
 
-	 if (line[0] == '.' && line[1] =='\0') {
+	if (line[0] == '.' && line[1] =='\0') {
 		/* This entire section needs an error handling revamp */
 		if (canonbody == CANON_SIMPLE && !session->has_body) {
 			if (EVP_DigestUpdate(session->bh, "\r\n", 2) <= 0) {
