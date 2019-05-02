@@ -90,6 +90,8 @@ static char *cryptalg = "rsa";
 static int canonheader = CANON_SIMPLE;
 static int canonbody = CANON_SIMPLE;
 
+static int addtime = 0;
+
 static char *domain = NULL;
 static char *selector = NULL;
 
@@ -127,7 +129,7 @@ main(int argc, char *argv[])
 	int debug = 0;
 	FILE *keyfile;
 
-	while ((ch = getopt(argc, argv, "a:c:Dd:h:k:s:")) != -1) {
+	while ((ch = getopt(argc, argv, "a:c:Dd:h:k:s:t")) != -1) {
 		switch (ch) {
 		case 'a':
 			if (strncmp(optarg, "rsa-", 4) != 0)
@@ -173,6 +175,9 @@ main(int argc, char *argv[])
 			break;
 		case 's':
 			selector = optarg;
+			break;
+		case 't':
+			addtime = 1;
 			break;
 		case 'D':
 			debug = 1;
@@ -556,6 +561,9 @@ dkim_sign(struct dkim_session *session)
 	char *tmp, *tmp2;
 	char tmpchar;
 
+	if (addtime && !dkim_signature_printf(session, "t=%lld; ",
+	    (long long) time(NULL)))
+		return;
 	if (canonbody == CANON_SIMPLE && !session->has_body) {
 		if (EVP_DigestUpdate(session->bh, "\r\n", 2) <= 0) {
 			dkim_err(session, "Can't update hash context");

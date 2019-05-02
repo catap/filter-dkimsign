@@ -25,6 +25,7 @@
 .Op Fl a Ar algorithm
 .Op Fl c Ar canonicalization
 .Op Fl h Ar headers
+.Op Fl t
 .Fl d Ar domain
 .Fl k Ar file
 .Fl s Ar selector
@@ -59,6 +60,8 @@ should point to a file containing the RSA private key to sign the messages.
 The selector within the _domainkey subdomain of
 .Ar domain
 where the public key can be found.
+.It Fl t
+Add the time of signing to the dkim header.
 .El
 .Sh SEE ALSO
 .Xr smtpd 8
