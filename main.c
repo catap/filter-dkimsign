@@ -21,6 +21,7 @@
 
 #include <ctype.h>
 #include <err.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -92,6 +93,7 @@ static int canonbody = CANON_SIMPLE;
 
 static int addtime = 0;
 static long long addexpire = 0;
+static int addheaders = 0;
 
 static char *domain = NULL;
 static char *selector = NULL;
@@ -116,6 +118,7 @@ int dkim_session_cmp(struct dkim_session *, struct dkim_session *);
 void dkim_parse_header(struct dkim_session *, char *, int);
 void dkim_parse_body(struct dkim_session *, char *);
 void dkim_sign(struct dkim_session *);
+int dkim_signature_printheader(struct dkim_session *, char *);
 int dkim_signature_printf(struct dkim_session *, char *, ...)
 	__attribute__((__format__ (printf, 2, 3)));
 int dkim_signature_normalize(struct dkim_session *);
@@ -131,7 +134,7 @@ main(int argc, char *argv[])
 	FILE *keyfile;
 	const char *errstr;
 
-	while ((ch = getopt(argc, argv, "a:c:Dd:h:k:s:tx:")) != -1) {
+	while ((ch = getopt(argc, argv, "a:c:Dd:h:k:s:tx:zZ")) != -1) {
 		switch (ch) {
 		case 'a':
 			if (strncmp(optarg, "rsa-", 4) != 0)
@@ -185,6 +188,12 @@ main(int argc, char *argv[])
 			addexpire = strtonum(optarg, 1, INT64_MAX, &errstr);
 			if (addexpire == 0)
 				errx(1, "Expire offset is %s", errstr);
+			break;
+		case 'z':
+			addheaders = 1;
+			break;
+		case 'Z':
+			addheaders = 2;
 			break;
 		case 'D':
 			debug = 1;
@@ -257,6 +266,8 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 			line++;
 		dkim_parse_header(session, line, 0);
 	} else if (linelen == 0 && session->parsing_headers) {
+		if (addheaders > 0 && !dkim_signature_printf(session, "; "))
+			return;
 		session->parsing_headers = 0;
 	} else {
 		if (line[0] == '.')
@@ -318,6 +329,8 @@ dkim_session_new(uint64_t reqid)
 	    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
 	    canonbody == CANON_SIMPLE ? "simple" : "relaxed",
 	    domain, selector))
+		return NULL;
+	if (addheaders > 0 && !dkim_signature_printf(session, "z="))
 		return NULL;
 
 	if ((session->b = EVP_MD_CTX_new()) == NULL ||
@@ -424,6 +437,10 @@ dkim_parse_header(struct dkim_session *session, char *line, int force)
 	char *htmp;
 	char *tmp;
 
+	if (addheaders == 2 && !force &&
+	    !dkim_signature_printheader(session, line))
+		return;
+
 	if ((line[0] == ' ' || line[0] == '\t') && !session->lastheader)
 		return;
 	if ((line[0] != ' ' && line[0] != '\t')) {
@@ -441,6 +458,10 @@ dkim_parse_header(struct dkim_session *session, char *line, int force)
 		if (i == nsign_headers && !force)
 			return;
 	}
+
+	if (addheaders == 1 && !force &&
+	    !dkim_signature_printheader(session, line))
+		return;
 
 	if (canonheader == CANON_RELAXED) {
 		if (!session->lastheader)
@@ -724,11 +745,13 @@ dkim_signature_normalize(struct dkim_session *session)
 		switch (tag) {
 		case 'B':
 		case 'b':
+		case 'z':
 			checkpoint = i;
 			break;
 		case 'h':
 			if (sig[i] == ':')
 				checkpoint = i;
+			break;
 		}
 		if (tag == '\0' && sig[i] != ' ' && sig[i] != '\t') {
 			if ((tag = sig[i]) == 'b' && sig[i + 1] == 'h' &&
@@ -741,6 +764,51 @@ dkim_signature_normalize(struct dkim_session *session)
 		}
 	}
 	return 1;
+}
+
+int
+dkim_signature_printheader(struct dkim_session *session, char *header)
+{
+	size_t i, j, len;
+	static char *fmtheader = NULL;
+	char *tmp;
+	static size_t size = 0;
+	int first;
+
+	len = strlen(header);
+	if ((len + 3) * 3 < len) {
+		errno = EOVERFLOW;
+		dkim_err(session, "Can't add z-component to header");
+		return 0;
+	}
+	if ((len + 3) * 3 > size) {
+		if ((tmp = reallocarray(fmtheader, 3, len + 3)) == NULL) {
+			dkim_err(session, "Can't add z-component to header");
+			return 0;
+		}
+		fmtheader = tmp;
+		size = (len + 1) * 3;
+	}
+
+	first = session->signature.signature[session->signature.len - 1] == '=';
+	for (j = i = 0; header[i] != '\0'; i++, j++) {
+		if (i == 0 && header[i] != ' ' && header[i] != '\t' && !first)
+			fmtheader[j++] = '|';
+		if ((header[i] >= 0x21 && header[i] <= 0x3A) ||
+		     header[i] == 0x3C ||
+		    (header[i] >= 0x3E && header[i] <= 0x7B) ||
+		    (header[i] >= 0x7D && header[i] <= 0x7E))
+			fmtheader[j] = header[i];
+		else {
+			fmtheader[j++] = '=';
+			(void) sprintf(fmtheader + j, "%02hhX", header[i]);
+			j++;
+		}
+	}
+	(void) sprintf(fmtheader + j, "=%02hhX=%02hhX", (unsigned char) '\r',
+	    (unsigned char) '\n');
+
+	return dkim_signature_printf(session, "%s", fmtheader);
 }
 
 int
