@@ -26,6 +26,7 @@
 .Op Fl c Ar canonicalization
 .Op Fl h Ar headers
 .Op Fl t
+.Op Fl x Ar seconds
 .Fl d Ar domain
 .Fl k Ar file
 .Fl s Ar selector
@@ -52,7 +53,7 @@ The email headers which are included in the mail signature.
 Per RFC this option requires at least the from header to be included.
 The headers are specified by separating them with a colon.
 The default is
-Ar from:reply-to:subject:date:to:cc:resent-date:resent-from:resent-to:resent-cc:in-reply-to:references:list-id:list-help:list-unsubscribe:list-subscribe:list-post:list-owner:list-archive .
+from:reply-to:subject:date:to:cc:resent-date:resent-from:resent-to:resent-cc:in-reply-to:references:list-id:list-help:list-unsubscribe:list-subscribe:list-post:list-owner:list-archive .
 .It Fl k
 .Ar file
 should point to a file containing the RSA private key to sign the messages.
@@ -62,6 +63,10 @@ The selector within the _domainkey subdomain of
 where the public key can be found.
 .It Fl t
 Add the time of signing to the dkim header.
+.It Fl x
+Add the amount of
+.Ar seconds
+the signature is valid to the dkim header.
 .El
 .Sh SEE ALSO
 .Xr smtpd 8

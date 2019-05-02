@@ -91,6 +91,7 @@ static int canonheader = CANON_SIMPLE;
 static int canonbody = CANON_SIMPLE;
 
 static int addtime = 0;
+static long long addexpire = 0;
 
 static char *domain = NULL;
 static char *selector = NULL;
@@ -128,8 +129,9 @@ main(int argc, char *argv[])
 	int i;
 	int debug = 0;
 	FILE *keyfile;
+	const char *errstr;
 
-	while ((ch = getopt(argc, argv, "a:c:Dd:h:k:s:t")) != -1) {
+	while ((ch = getopt(argc, argv, "a:c:Dd:h:k:s:tx:")) != -1) {
 		switch (ch) {
 		case 'a':
 			if (strncmp(optarg, "rsa-", 4) != 0)
@@ -178,6 +180,11 @@ main(int argc, char *argv[])
 			break;
 		case 't':
 			addtime = 1;
+			break;
+		case 'x':
+			addexpire = strtonum(optarg, 1, INT64_MAX, &errstr);
+			if (addexpire == 0)
+				errx(1, "Expire offset is %s", errstr);
 			break;
 		case 'D':
 			debug = 1;
@@ -556,14 +563,20 @@ dkim_sign(struct dkim_session *session)
 	char bbh[EVP_MAX_MD_SIZE];
 	char bh[(((sizeof(bbh) + 2) / 3) * 4) + 1];
 	char *b;
+	time_t now;
 	ssize_t i, j;
 	size_t linelen;
 	char *tmp, *tmp2;
 	char tmpchar;
 
-	if (addtime && !dkim_signature_printf(session, "t=%lld; ",
-	    (long long) time(NULL)))
+	if (addtime || addexpire)
+		now = time(NULL);
+	if (addtime && !dkim_signature_printf(session, "t=%lld; ", now))
 		return;
+	if (addexpire != 0 && !dkim_signature_printf(session, "x=%lld; ",
+	    now + addexpire < now ? INT64_MAX : now + addexpire))
+		return;
+
 	if (canonbody == CANON_SIMPLE && !session->has_body) {
 		if (EVP_DigestUpdate(session->bh, "\r\n", 2) <= 0) {
 			dkim_err(session, "Can't update hash context");
