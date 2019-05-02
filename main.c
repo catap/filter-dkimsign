@@ -112,6 +112,7 @@ void dkim_session_free(struct dkim_session *);
 int dkim_session_cmp(struct dkim_session *, struct dkim_session *);
 void dkim_parse_header(struct dkim_session *, char *, int);
 void dkim_parse_body(struct dkim_session *, char *);
+void dkim_sign(struct dkim_session *);
 int dkim_signature_printf(struct dkim_session *, char *, ...)
 	__attribute__((__format__ (printf, 2, 3)));
 int dkim_signature_normalize(struct dkim_session *);
@@ -220,15 +221,7 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
     char *phase, uint64_t reqid, uint64_t token, char *line)
 {
 	struct dkim_session *session, search;
-	struct dkim_signature sig;
-	/* Use largest hash size her */
-	char bbh[EVP_MAX_MD_SIZE];
-	char bh[(((sizeof(bbh) + 2) / 3) * 4) + 1];
-	char *b;
-	ssize_t i, j;
 	size_t linelen;
-	char *tmp, *tmp2;
-	char tmpchar;
 
 	search.reqid = reqid;
 	session = RB_FIND(dkim_sessions, &dkim_sessions, &search);
@@ -246,94 +239,7 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 		dkim_err(session, "Couldn't write to tempfile");
 
 	if (line[0] == '.' && line[1] =='\0') {
-		/* This entire section needs an error handling revamp */
-		if (canonbody == CANON_SIMPLE && !session->has_body) {
-			if (EVP_DigestUpdate(session->bh, "\r\n", 2) <= 0) {
-				dkim_err(session, "Can't update hash context");
-				return;
-			}
-		}
-		if (EVP_DigestFinal_ex(session->bh, bbh, NULL) == 0) {
-			dkim_err(session, "Can't finalize hash context");
-			return;
-		}
-		EVP_EncodeBlock(bh, bbh, EVP_MD_CTX_size(session->bh));
-		if (!dkim_signature_printf(session, "bh=%s; h=", bh))
-			return;
-		/* Reverse order for ease of use of RFC6367 section 5.4.2 */
-		for (i = 0; session->headers[i] != NULL; i++)
-			continue;
-		for (i--; i >= 0; i--) {
-			if (EVP_DigestSignUpdate(session->b,
-			    session->headers[i],
-			    strlen(session->headers[i])) <= 0 ||
-			    EVP_DigestSignUpdate(session->b,
-			    "\r\n", 2) <= 0) {
-				dkim_errx(session,
-				    "Failed to update digest context");
-				return;
-			}
-			/* We're done with the cashed header after hashing */
-			for (tmp = session->headers[i]; tmp[0] != ':'; tmp++) {
-				if (tmp[0] == ' ' || tmp[0] == '\t')
-					break;
-				tmp[0] = tolower(tmp[0]);
-			}
-			tmp[0] = '\0';
-			if (!dkim_signature_printf(session, "%s%s",
-			    session->headers[i + 1] == NULL  ? "" : ":",
-			    session->headers[i]))
-				return;
-			tmp[0] = tmpchar;
-		}
-		dkim_signature_printf(session, "; b=");
-		if (!dkim_signature_normalize(session))
-			return;
-		if ((tmp = strdup(session->signature.signature)) == NULL) {
-			dkim_err(session, "Can't create DKIM signature");
-			return;
-		}
-		dkim_parse_header(session, tmp, 1);
-		if (EVP_DigestSignUpdate(session->b, tmp,
-		    strlen(tmp)) <= 0) {
-			dkim_err(session, "Failed to update digest context");
-			return;
-		}
-		free(tmp);
-		if (EVP_DigestSignFinal(session->b, NULL, &linelen) <= 0) {
-			dkim_err(session, "Failed to finalize digest");
-			return;
-		}
-		if ((tmp = malloc(linelen)) == NULL) {
-			dkim_err(session, "Can't allocate space for digest");
-			return;
-		}
-		if (EVP_DigestSignFinal(session->b, tmp, &linelen) <= 0) {
-			dkim_err(session, "Failed to finalize digest");
-			return;
-		}
-		/* Lines are unlikely to overflow */
-		b = malloc((((linelen + 2) / 3) * 4) + 1);
-		EVP_EncodeBlock(b, tmp, linelen);
-		free(tmp);
-		dkim_signature_printf(session, "%s\r\n", b);
-		free(b);
-		dkim_signature_normalize(session);
-		tmp = session->signature.signature;
-		while ((tmp2 = strchr(tmp, '\r')) != NULL) {
-			tmp2[0] = '\0';
-			smtp_filter_dataline(session->reqid, session->token,
-			    "%s", tmp);
-			tmp = tmp2 + 2;
-		}
-		tmp = NULL;
-		linelen = 0;
-		rewind(session->origf);
-		while ((i = getline(&tmp, &linelen, session->origf)) != -1) {
-			tmp[i - 1] = '\0';
-			smtp_filter_dataline(session->reqid, session->token,
-			    "%s", tmp);
-		}
+		dkim_sign(session);
 	} else if (linelen !=  0 && session->parsing_headers) {
 		if (line[0] == '.')
 			line++;
@@ -635,6 +541,105 @@ dkim_parse_body(struct dkim_session *session, char *line)
 	    EVP_DigestUpdate(session->bh, "\r\n", 2) == 0) {
 		dkim_err(session, "Can't update hash context");
 		return;
+	}
+}
+
+void
+dkim_sign(struct dkim_session *session)
+{
+	/* Use largest hash size here */
+	char bbh[EVP_MAX_MD_SIZE];
+	char bh[(((sizeof(bbh) + 2) / 3) * 4) + 1];
+	char *b;
+	ssize_t i, j;
+	size_t linelen;
+	char *tmp, *tmp2;
+	char tmpchar;
+
+	if (canonbody == CANON_SIMPLE && !session->has_body) {
+		if (EVP_DigestUpdate(session->bh, "\r\n", 2) <= 0) {
+			dkim_err(session, "Can't update hash context");
+			return;
+		}
+	}
+	if (EVP_DigestFinal_ex(session->bh, bbh, NULL) == 0) {
+		dkim_err(session, "Can't finalize hash context");
+		return;
+	}
+	EVP_EncodeBlock(bh, bbh, EVP_MD_CTX_size(session->bh));
+	if (!dkim_signature_printf(session, "bh=%s; h=", bh))
+		return;
+	/* Reverse order for ease of use of RFC6367 section 5.4.2 */
+	for (i = 0; session->headers[i] != NULL; i++)
+		continue;
+	for (i--; i >= 0; i--) {
+		if (EVP_DigestSignUpdate(session->b,
+		    session->headers[i],
+		    strlen(session->headers[i])) <= 0 ||
+		    EVP_DigestSignUpdate(session->b, "\r\n", 2) <= 0) {
+			dkim_errx(session, "Failed to update digest context");
+			return;
+		}
+		/* We're done with the cached header after hashing */
+		for (tmp = session->headers[i]; tmp[0] != ':'; tmp++) {
+			if (tmp[0] == ' ' || tmp[0] == '\t')
+				break;
+			tmp[0] = tolower(tmp[0]);
+		}
+		tmp[0] = '\0';
+		if (!dkim_signature_printf(session, "%s%s",
+		    session->headers[i + 1] == NULL  ? "" : ":",
+		    session->headers[i]))
+			return;
+		tmp[0] = tmpchar;
+	}
+	dkim_signature_printf(session, "; b=");
+	if (!dkim_signature_normalize(session))
+		return;
+	if ((tmp = strdup(session->signature.signature)) == NULL) {
+		dkim_err(session, "Can't create DKIM signature");
+		return;
+	}
+	dkim_parse_header(session, tmp, 1);
+	if (EVP_DigestSignUpdate(session->b, tmp, strlen(tmp)) <= 0) {
+		dkim_err(session, "Failed to update digest context");
+		return;
+	}
+	free(tmp);
+	if (EVP_DigestSignFinal(session->b, NULL, &linelen) <= 0) {
+		dkim_err(session, "Failed to finalize digest");
+		return;
+	}
+	if ((tmp = malloc(linelen)) == NULL) {
+		dkim_err(session, "Can't allocate space for digest");
+		return;
+	}
+	if (EVP_DigestSignFinal(session->b, tmp, &linelen) <= 0) {
+		dkim_err(session, "Failed to finalize digest");
+		return;
+	}
+	if ((b = malloc((((linelen + 2) / 3) * 4) + 1)) == NULL) {
+		dkim_err(session, "Can't create DKIM signature");
+		return;
+	}
+	EVP_EncodeBlock(b, tmp, linelen);
+	free(tmp);
+	dkim_signature_printf(session, "%s\r\n", b);
+	free(b);
+	dkim_signature_normalize(session);
+	tmp = session->signature.signature;
+	while ((tmp2 = strchr(tmp, '\r')) != NULL) {
+		tmp2[0] = '\0';
+		smtp_filter_dataline(session->reqid, session->token,
+		    "%s", tmp);
+		tmp = tmp2 + 2;
+	}
+	tmp = NULL;
+	linelen = 0;
+	rewind(session->origf);
+	while ((i = getline(&tmp, &linelen, session->origf)) != -1) {
+		tmp[i - 1] = '\0';
+		smtp_filter_dataline(session->reqid, session->token, "%s", tmp);
 	}
 }
 
