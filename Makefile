@@ -2,7 +2,7 @@
 
 PROG=	filter-dkim
 BINDIR=	/usr/libexec/smtpd/
-SRCS+=	main.c log.c smtp_proc.c
+SRCS+=	main.c smtp_proc.c
 
 CFLAGS+= -g3 -O0
 LDADD+=	-levent -lcrypto

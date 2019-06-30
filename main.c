@@ -30,7 +30,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "log.h"
 #include "smtp_proc.h"
 
 struct dkim_signature {
@@ -202,18 +201,17 @@ main(int argc, char *argv[])
 			usage();
 		}
 	}
-	log_init(debug, LOG_MAIL);
 
 	OpenSSL_add_all_digests();
 	if ((hash_md = EVP_get_digestbyname(hashalg)) == NULL)
-		fatalx("Can't find hash: %s", hashalg);
+		errx(1, "Can't find hash: %s", hashalg);
 
 	/*
 	 * fattr required for tmpfile.
 	 * Can hopefully be removed in the future
 	 */
 	if (pledge("fattr tmppath stdio", NULL) == -1)
-		fatal("pledge");
+		err(1, "pledge");
 
 	if (domain == NULL || selector == NULL || pkey == NULL)
 		usage();
@@ -251,7 +249,7 @@ dkim_dataline(char *type, int version, struct timespec *tm, char *direction,
 			return;
 		session->token = token;
 	} else if (session->token != token)
-		fatalx("Token incorrect");
+		errx(1, "Token incorrect");
 	if (session->err)
 		return;
 
@@ -284,7 +282,7 @@ dkim_commit(char *type, int version, struct timespec *tm, char *direction,
 
 	search.reqid = reqid;
 	if ((session = RB_FIND(dkim_sessions, &dkim_sessions, &search)) == NULL)
-		fatalx("Commit on undefined session");
+		errx(1, "Commit on undefined session");
 
 	if (session->err)
 		smtp_filter_disconnect(session->reqid, session->token,
@@ -302,7 +300,7 @@ dkim_session_new(uint64_t reqid)
 	struct dkim_signature *signature;
 
 	if ((session = calloc(1, sizeof(*session))) == NULL)
-		fatal(NULL);
+		err(1, NULL);
 
 	session->reqid = reqid;
 	if ((session->origf = tmpfile()) == NULL) {
@@ -344,7 +342,7 @@ dkim_session_new(uint64_t reqid)
 		return NULL;
 	}
 	if (RB_INSERT(dkim_sessions, &dkim_sessions, session) != NULL)
-		fatalx("session already registered");
+		errx(1, "session already registered");
 	return session;
 }
 
@@ -414,14 +412,14 @@ void
 dkim_err(struct dkim_session *session, char *msg)
 {
 	session->err = 1;
-	log_warn("%s", msg);
+	warn("%s", msg);
 }
 
 void
 dkim_errx(struct dkim_session *session, char *msg)
 {
 	session->err = 1;
-	log_warnx("%s", msg);
+	warnx("%s", msg);
 }
 
 void
@@ -524,14 +522,14 @@ dkim_parse_header(struct dkim_session *session, char *line, int force)
 		session->headers[lastheader] = htmp;
 		if (canonheader == CANON_SIMPLE) {
 			if (strlcat(htmp, "\r\n", linelen) >= linelen)
-				fatalx("Missized header");
+				errx(1, "Missized header");
 		} else if (canonheader == CANON_RELAXED &&
 		    (tmp = strchr(session->headers[lastheader], ':')) != NULL &&
 		    tmp[1] == '\0')
 			line++;
 
 		if (strlcat(htmp, line, linelen) >= linelen)
-			fatalx("Missized header");
+			errx(1, "Missized header");
 	}
 }
 
@@ -829,7 +827,7 @@ dkim_signature_printf(struct dkim_session *session, char *fmt, ...)
 		va_start(ap, fmt);
 		if ((len = vsnprintf(sig->signature + sig->len, sig->size - sig->len,
 		    fmt, ap)) >= sig->size - sig->len)
-			fatalx("Miscalculated header size");
+			errx(1, "Miscalculated header size");
 	}
 	sig->len += len;
 	va_end(ap);

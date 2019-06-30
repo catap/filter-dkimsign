@@ -17,6 +17,7 @@
 #include <sys/socket.h>
 
 #include <arpa/inet.h>
+#include <err.h>
 #include <errno.h>
 #include <event.h>
 #include <fcntl.h>
@@ -28,7 +29,6 @@
 #include <syslog.h>
 #include <unistd.h>
 
-#include "log.h"
 #include "smtp_proc.h"
 
 #define NITEMS(x) (sizeof(x) / sizeof(*x))
@@ -125,13 +125,12 @@ smtp_run(int debug)
 	smtp_printf("register|ready\n");
 	ready = 1;
 
-	log_init(debug, LOG_MAIL);
 	event_set(&stdinev, STDIN_FILENO, EV_READ | EV_PERSIST, smtp_newline,
 	    &stdinev);
 	event_add(&stdinev, NULL);
 
 	if (fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK) == -1)
-		fatal("fcntl");
+		err(1, "fcntl");
 	event_dispatch();
 }
 
@@ -156,12 +155,12 @@ smtp_getline(char ** restrict buf, size_t * restrict size)
 					*size = sepoff - rsoff + 1;
 					*buf = realloc(*buf, sepoff - rsoff + 1);
 					if (*buf == NULL)
-						fatal(NULL);
+						err(1, NULL);
 				}
 				sep[0] = '\0';
 				strlen = strlcpy(*buf, rbuf + rsoff, *size);
 				if (strlen >= *size)
-					fatalx("copy buffer too small");
+					errx(1, "copy buffer too small");
 				rsoff = sepoff + 1;
 				return strlen;
 			}
@@ -175,7 +174,7 @@ smtp_getline(char ** restrict buf, size_t * restrict size)
 		/* If we still can't fill alloc some new memory. */
 		if (rbsize - reoff < 1500) {
 			if ((rbuf = realloc(rbuf, rbsize + 4096)) == NULL)
-				fatal(NULL);
+				err(1, NULL);
 			rbsize += 4096;
 		}
 		nread = read(STDIN_FILENO, rbuf + reoff, rbsize - reoff);
@@ -202,46 +201,46 @@ smtp_newline(int fd, short event, void *arg)
 	while ((linelen = smtp_getline(&line, &linesize)) > 0) {
 		if (dupsize < linesize) {
 			if ((linedup = realloc(linedup, linesize)) == NULL)
-				fatal(NULL);
+				err(1, NULL);
 			dupsize = linesize;
 		}
 		strlcpy(linedup, line, dupsize);
 		type = line;
 		if ((start = strchr(type, '|')) == NULL)
-			fatalx("Invalid line received: missing version: %s", linedup);
+			errx(1, "Invalid line received: missing version: %s", linedup);
 		start++[0] = '\0';
 		if ((end = strchr(start, '|')) == NULL)
-			fatalx("Invalid line received: missing time: %s", linedup);
+			errx(1, "Invalid line received: missing time: %s", linedup);
 		end++[0] = '\0';
 		if (strcmp(start, "1") != 0)
-			fatalx("Unsupported protocol received: %s: %s", start, linedup);
+			errx(1, "Unsupported protocol received: %s: %s", start, linedup);
 		version = 1;
 		start = end;
 		if ((direction = strchr(start, '|')) == NULL)
-			fatalx("Invalid line received: missing direction: %s", linedup);
+			errx(1, "Invalid line received: missing direction: %s", linedup);
 		direction++[0] = '\0';
 		tm.tv_sec = (time_t) strtoull(start, &end, 10);
 		tm.tv_nsec = 0;
 		if (start[0] == '\0' || (end[0] != '\0' && end[0] != '.'))
-			fatalx("Invalid line received: invalid timestamp: %s", linedup);
+			errx(1, "Invalid line received: invalid timestamp: %s", linedup);
 		if (end[0] == '.') {
 			start = end + 1;
 			tm.tv_nsec = strtol(start, &end, 10);
 			if (start[0] == '\0' || end[0] != '\0')
-				fatalx("Invalid line received: invalid "
+				errx(1, "Invalid line received: invalid "
 				    "timestamp: %s", linedup);
 			for (i = 9 - (end - start); i > 0; i--)
 				tm.tv_nsec *= 10;
 		}
 		if ((phase = strchr(direction, '|')) == NULL)
-			fatalx("Invalid line receieved: missing phase: %s", linedup);
+			errx(1, "Invalid line receieved: missing phase: %s", linedup);
 		phase++[0] = '\0';
 		if ((start = strchr(phase, '|')) == NULL)
-			fatalx("Invalid line received: missing reqid: %s", linedup);
+			errx(1, "Invalid line received: missing reqid: %s", linedup);
 		start++[0] = '\0';
 		reqid = strtoull(start, &params, 16);
 		if (start[0] == '|' || (params[0] != '|' & params[0] != '\0'))
-			fatalx("Invalid line received: invalid reqid: %s", linedup);
+			errx(1, "Invalid line received: invalid reqid: %s", linedup);
 		params++;
 
 		for (i = 0; i < NITEMS(smtp_callbacks); i++) {
@@ -251,14 +250,14 @@ smtp_newline(int fd, short event, void *arg)
 				break;
 		}
 		if (i == NITEMS(smtp_callbacks)) {
-			fatalx("Invalid line received: received unregistered "
+			errx(1, "Invalid line received: received unregistered "
 			    "%s: %s: %s", type, phase, linedup);
 		}
 		if (strcmp(type, "filter") == 0) {
 			start = params;
 			token = strtoull(start, &params, 16);
 			if (start[0] == '|' || params[0] != '|')
-				fatalx("Invalid line received: invalid token: %s", linedup);
+				errx(1, "Invalid line received: invalid token: %s", linedup);
 			params++;
 			smtp_callbacks[i].smtp_filter(&(smtp_callbacks[i]),
 			    version, &tm, reqid, token, params);
@@ -283,7 +282,7 @@ smtp_connect(struct smtp_callback *cb, int version, struct timespec *tm,
 
 	hostname = params;
 	if ((address = strchr(params, '|')) == NULL)
-		fatalx("Invalid line received: missing address: %s", params);
+		errx(1, "Invalid line received: missing address: %s", params);
 	address++[0] = '\0';
 
 	addrx.af = AF_INET;
@@ -295,9 +294,9 @@ smtp_connect(struct smtp_callback *cb, int version, struct timespec *tm,
 	ret = inet_pton(addrx.af, address, addrx.af == AF_INET ?
 	    (void *)&(addrx.addr) : (void *)&(addrx.addr6));
 	if (ret == 0)
-		fatalx("Invalid line received: Couldn't parse address: %s", params);
+		errx(1, "Invalid line received: Couldn't parse address: %s", params);
 	if (ret == -1)
-		fatal("Couldn't convert address: %s", params);
+		err(1, "Couldn't convert address: %s", params);
 
 	f = cb->cb;
 	f(cb->type, version, tm, cb->direction, cb->phase, reqid, token,
@@ -365,17 +364,17 @@ smtp_vprintf(const char *fmt, va_list ap)
 	fmtlen = vsnprintf(buf.buf + buf.buflen, buf.bufsize - buf.buflen, fmt,
 	    ap);
 	if (fmtlen == -1)
-		fatal("vsnprintf");
+		err(1, "vsnprintf");
 	if (fmtlen >= buf.bufsize - buf.buflen) {
 		buf.bufsize = buf.buflen + fmtlen + 1;
 		buf.buf = reallocarray(buf.buf, buf.bufsize,
 		    sizeof(*(buf.buf)));
 		if (buf.buf == NULL)
-			fatal(NULL);
+			err(1, NULL);
 		fmtlen = vsnprintf(buf.buf + buf.buflen,
 		    buf.bufsize - buf.buflen, fmt, cap);
 		if (fmtlen == -1)
-			fatal("vsnprintf");
+			err(1, "vsnprintf");
 	}
 	va_end(cap);
 	buf.buflen += fmtlen;
@@ -401,7 +400,7 @@ smtp_write(int fd, short event, void *arg)
 	wlen = write(fd, buf->buf, buf->buflen);
 	if (wlen == -1) {
 		if (errno != EAGAIN && errno != EINTR)
-			fatal("Failed to write to smtpd");
+			err(1, "Failed to write to smtpd");
 		event_add(&stdoutev, NULL);
 		return;
 	}
@@ -421,7 +420,7 @@ smtp_filter_reject(uint64_t reqid, uint64_t token, int code,
 	va_list ap;
 
 	if (code < 200 || code > 599)
-		fatalx("Invalid reject code");
+		errx(1, "Invalid reject code");
 
 	smtp_printf("filter-result|%016"PRIx64"|%016"PRIx64"|reject|%d ", token,
 	    reqid, code);
@@ -463,7 +462,7 @@ smtp_register(char *type, char *phase, char *direction, void *cb)
 	static int evinit = 0;
 
 	if (ready)
-		fatalx("Can't register when proc is running");
+		errx(1, "Can't register when proc is running");
 
 	if (!evinit) {
 		event_init();
