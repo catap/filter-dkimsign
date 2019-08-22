@@ -22,13 +22,11 @@
 .Nd add dkim signature to messages
 .Sh SYNOPSIS
 .Nm
+.Op Fl tz
 .Op Fl a Ar algorithm
 .Op Fl c Ar canonicalization
 .Op Fl h Ar headers
-.Op Fl t
 .Op Fl x Ar seconds
-.Op Fl z
-.Op Fl Z
 .Fl d Ar domain
 .Fl k Ar file
 .Fl s Ar selector
@@ -71,9 +69,9 @@ Add the amount of
 the signature is valid to the dkim header.
 .It Fl z
 Add the mail headers used in the dkim signature to the dkim header.
-Useful for debugging purposes.
-.It Fl Z
-Add all the mail headers to the dkim header.
+If a second
+.Fl z
+is specified all headers will be included in the dkim header.
 Useful for debugging purposes.
 .El
 .Sh SEE ALSO

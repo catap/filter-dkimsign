@@ -2,10 +2,14 @@
 
 PROG=	filter-dkim
 BINDIR=	/usr/libexec/smtpd/
-SRCS+=	main.c smtp_proc.c
+SRCS+=	main.c
 
-CFLAGS+= -g3 -O0
-LDADD+=	-levent -lcrypto
+CFLAGS+=-Wall -I${.CURDIR}
+CFLAGS+=-Wstrict-prototypes -Wmissing-prototypes
+CFLAGS+=-Wmissing-declarations
+CFLAGS+=-Wshadow -Wpointer-arith -Wcast-qual
+CFLAGS+=-Wsign-compare
+LDADD+=	-levent -lcrypto -lopensmtpd
 DPADD=	${LIBEVENT} ${LIBCRYPTO}
 
 .include <bsd.prog.mk>
