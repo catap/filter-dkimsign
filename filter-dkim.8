@@ -35,35 +35,35 @@
 adds a dkim signature to the message.
 The following flags are supported:
 .Bl -tag -width Ds
-.It Fl a
+.It Fl a Ar algorithm
 The algorithm to use.
 This implementation only supports rsa cryptography.
 Only sha256 should be used for hashing, since other algorithms are most likely
 not supported by verifiers.
 Defaults to
 .Ar rsa-sha256 .
-.It Fl c
+.It Fl c Ar canonicalization
 The canonicalization algorithm used to sign the messge.
 Defaults to
 .Ar simple/simple .
-.It Fl d
+.It Fl d Ar domain
 The domain where the public key can be found.
-.It Fl h
+.It Fl h Ar headers
 The email headers which are included in the mail signature.
 Per RFC this option requires at least the from header to be included.
 The headers are specified by separating them with a colon.
 The default is
 from:reply-to:subject:date:to:cc:resent-date:resent-from:resent-to:resent-cc:in-reply-to:references:list-id:list-help:list-unsubscribe:list-subscribe:list-post:list-owner:list-archive .
-.It Fl k
+.It Fl k Ar file
 .Ar file
 should point to a file containing the RSA private key to sign the messages.
-.It Fl s
+.It Fl s Ar selector
 The selector within the _domainkey subdomain of
 .Ar domain
 where the public key can be found.
 .It Fl t
 Add the time of signing to the dkim header.
-.It Fl x
+.It Fl x Ar seconds
 Add the amount of
 .Ar seconds
 the signature is valid to the dkim header.
