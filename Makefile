@@ -1,5 +1,3 @@
-# $Revision$
-
 PROG=	filter-dkim
 MAN=	filter-dkim.8
 BINDIR=	/usr/libexec/smtpd/
