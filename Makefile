@@ -1,4 +1,4 @@
-#	$OpenBSD: Makefile,v 1.1 2018/04/26 13:57:13 eric Exp $
+# $Revision$
 
 PROG=	filter-dkim
 MAN=	filter-dkim.8
