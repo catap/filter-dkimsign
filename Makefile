@@ -1,6 +1,8 @@
 PROG=	filter-dkim
 MAN=	filter-dkim.8
-BINDIR=	/usr/libexec/smtpd/
+BINDIR=	${LOCALBASE}/libexec/smtpd/
+MANDIR=	${LOCALBASE}/man/man
+
 SRCS+=	main.c
 
 CFLAGS+=-Wall -I${.CURDIR}
@@ -10,5 +12,8 @@ CFLAGS+=-Wshadow -Wpointer-arith -Wcast-qual
 CFLAGS+=-Wsign-compare
 LDADD+=	-levent -lcrypto -lopensmtpd
 DPADD=	${LIBEVENT} ${LIBCRYPTO}
+
+bindir:
+	${INSTALL} -d ${DESTDIR}${BINDIR}
 
 .include <bsd.prog.mk>
