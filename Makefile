@@ -1,5 +1,5 @@
-PROG=	filter-dkim
-MAN=	filter-dkim.8
+PROG=	filter-dkimsign
+MAN=	filter-dkimsign.8
 BINDIR=	${LOCALBASE}/libexec/smtpd/
 MANDIR=	${LOCALBASE}/man/man
 

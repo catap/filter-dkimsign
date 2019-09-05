@@ -796,8 +796,8 @@ dkim_signature_need(struct dkim_message *message, size_t len)
 __dead void
 usage(void)
 {
-	fprintf(stderr, "usage: filter-dkim [-tz] [-a signalg] "
-	    "[-c canonicalization] [-h headerfields]\n    "
+	fprintf(stderr, "usage: filter-dkimsign [-tz] [-a signalg] "
+	    "[-c canonicalization] \n    [-h headerfields]"
 	    "[-x seconds] -d domain -k keyfile -s selector\n");
 	exit(1);
 }
