@@ -276,7 +276,7 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	message->err = 0;
 
 	if (!dkim_signature_printf(message,
-	    "DKIM-signature: v=%s; a=%s-%s; c=%s/%s; d=%s; s=%s; ", "1",
+	    "DKIM-Signature: v=%s; a=%s-%s; c=%s/%s; d=%s; s=%s; ", "1",
 	    cryptalg, hashalg,
 	    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
 	    canonbody == CANON_SIMPLE ? "simple" : "relaxed",
