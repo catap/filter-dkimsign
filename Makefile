@@ -12,8 +12,8 @@ CFLAGS+=-Wmissing-declarations
 CFLAGS+=-Wshadow -Wpointer-arith -Wcast-qual
 CFLAGS+=-Wsign-compare
 LDFLAGS+=-L${LOCALBASE}/lib
-LDADD+=	-levent -lcrypto -lopensmtpd
-DPADD=	${LIBEVENT} ${LIBCRYPTO}
+LDADD+=	-lcrypto -lopensmtpd
+DPADD=	${LIBCRYPTO}
 
 bindir:
 	${INSTALL} -d ${DESTDIR}${BINDIR}
