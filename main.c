@@ -412,7 +412,7 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 			fieldname = 1;
 		for (r = w = 0; line[r] != '\0'; r++) {
 			if (line[r] == ':' && fieldname) {
-				if (line[w - 1] == ' ')
+				if (w > 0 && line[w - 1] == ' ')
 					line[w - 1] = ':';
 				else
 					line[w++] = ':';
@@ -424,7 +424,7 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 			}
 			if (line[r] == ' ' || line[r] == '\t' ||
 			    line[r] == '\r' || line[r] == '\n') {
-				if (r != 0 && line[w - 1] == ' ')
+				if (r != 0 && w != 0 && line[w - 1] == ' ')
 					continue;
 				else
 					line[w++] = ' ';
@@ -434,7 +434,7 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 			} else
 				line[w++] = line[r];
 		}
-		linelen = line[w - 1] == ' ' ? w - 1 : w;
+		linelen = (w != 0 && line[w - 1] == ' ') ? w - 1 : w;
 		line[linelen] = '\0';
 	} else
 		linelen = strlen(line);
@@ -495,7 +495,7 @@ dkim_parse_body(struct dkim_message *message, char *line)
 			} else
 				line[w++] = line[r];
 		}
-		linelen = line[w - 1] == ' ' ? w - 1 : w;
+		linelen = (w != 0 && line[w - 1] == ' ') ? w - 1 : w;
 		line[linelen] = '\0';
 	} else
 		linelen = strlen(line);

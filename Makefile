@@ -1,3 +1,4 @@
+LOCALBASE?=	/usr/local/
 PROG=	filter-dkimsign
 MAN=	filter-dkimsign.8
 BINDIR=	${LOCALBASE}/libexec/smtpd/
