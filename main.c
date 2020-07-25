@@ -208,8 +208,11 @@ dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
 	char *linedup;
 	size_t linelen;
 
-	if (message->err)
+	if (message->err) {
+		if (line[0] == '.' && line[1] =='\0')
+			osmtpd_filter_dataline(ctx, ".");
 		return;
+	}
 
 	linelen = strlen(line);
 	if (fprintf(message->origf, "%s\n", line) < (int) linelen)
