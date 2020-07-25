@@ -361,7 +361,7 @@ void
 dkim_err(struct dkim_message *message, char *msg)
 {
 	message->err = 1;
-	fprintf(stderr, "%s\n", msg);
+	fprintf(stderr, "%s: %s\n", msg, strerror(errno));
 }
 
 void
