@@ -4,7 +4,7 @@ MAN=	filter-dkimsign.8
 BINDIR=	${LOCALBASE}/libexec/smtpd/
 MANDIR=	${LOCALBASE}/man/man
 
-SRCS+=	main.c
+SRCS+=	main.c mheader.c
 
 CFLAGS+=-I${LOCALBASE}/include
 CFLAGS+=-Wall -I${.CURDIR}

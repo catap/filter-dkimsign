@@ -47,7 +47,19 @@ The canonicalization algorithm used to sign the messge.
 Defaults to
 .Ar simple/simple .
 .It Fl d Ar domain
-The domain where the public key can be found.
+The
+.Ar domain
+where the public key can be found.
+This option can be specified multiple times to select the best
+.Ar domain
+during signing.
+If specified multiple times it looks at the domain component of the first
+mailbox in the from-header and tries to find a match.
+If no exact match can be found it looks for the closest parent
+.Ar domain .
+If no matches can be the first
+.Ar domain
+specified will be used.
 .It Fl h Ar headers
 The email headers which are included in the mail signature.
 Per RFC this option requires at least the from header to be included.

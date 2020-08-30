@@ -28,6 +28,7 @@
 #include <unistd.h>
 
 #include "opensmtpd.h"
+#include "mheader.h"
 
 struct dkim_signature {
 	char *signature;
@@ -85,7 +86,8 @@ static int addtime = 0;
 static long long addexpire = 0;
 static int addheaders = 0;
 
-static char *domain = NULL;
+static char **domain = NULL;
+static size_t ndomains = 0;
 static char *selector = NULL;
 
 static EVP_PKEY *pkey;
@@ -108,6 +110,7 @@ int dkim_signature_printheader(struct dkim_message *, const char *);
 int dkim_signature_printf(struct dkim_message *, char *, ...)
 	__attribute__((__format__ (printf, 2, 3)));
 int dkim_signature_normalize(struct dkim_message *);
+const char *dkim_domain_select(struct dkim_message *, char *);
 int dkim_signature_need(struct dkim_message *, size_t);
 int dkim_sign_init(struct dkim_message *);
 
@@ -148,7 +151,10 @@ main(int argc, char *argv[])
 				osmtpd_err(1, "Invalid canonicalization");
 			break;
 		case 'd':
-			domain = optarg;
+			if ((domain = reallocarray(domain, ndomains + 1,
+			    sizeof(*domain))) == NULL)
+				osmtpd_err(1, "malloc");
+			domain[ndomains++] = optarg;
 			break;
 		case 'h':
 			dkim_headers_set(optarg);
@@ -279,11 +285,10 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	message->err = 0;
 
 	if (!dkim_signature_printf(message,
-	    "DKIM-Signature: v=%s; a=%s-%s; c=%s/%s; d=%s; s=%s; ", "1",
+	    "DKIM-Signature: v=%s; a=%s-%s; c=%s/%s; s=%s; ", "1",
 	    cryptalg, hashalg,
 	    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
-	    canonbody == CANON_SIMPLE ? "simple" : "relaxed",
-	    domain, selector))
+	    canonbody == CANON_SIMPLE ? "simple" : "relaxed", selector))
 		return NULL;
 	if (addheaders > 0 && !dkim_signature_printf(message, "z="))
 		return NULL;
@@ -532,6 +537,7 @@ dkim_sign(struct osmtpd_ctx *ctx)
 	char bbh[EVP_MAX_MD_SIZE];
 	char bh[(((sizeof(bbh) + 2) / 3) * 4) + 1];
 	char *b;
+	const char *sdomain = domain[0], *tsdomain;
 	time_t now;
 	ssize_t i;
 	size_t linelen;
@@ -569,6 +575,8 @@ dkim_sign(struct osmtpd_ctx *ctx)
 			dkim_errx(message, "Failed to update digest context");
 			return;
 		}
+		if ((tsdomain = dkim_domain_select(message, message->headers[i])) != NULL)
+			sdomain = tsdomain;
 		/* We're done with the cached header after hashing */
 		for (tmp = message->headers[i]; tmp[0] != ':'; tmp++) {
 			if (tmp[0] == ' ' || tmp[0] == '\t')
@@ -581,7 +589,7 @@ dkim_sign(struct osmtpd_ctx *ctx)
 		    message->headers[i]))
 			return;
 	}
-	dkim_signature_printf(message, "; b=");
+	dkim_signature_printf(message, "; d=%s; b=", sdomain);
 	if (!dkim_signature_normalize(message))
 		return;
 	if ((tmp = strdup(message->signature.signature)) == NULL) {
@@ -777,6 +785,34 @@ dkim_signature_printf(struct dkim_message *message, char *fmt, ...)
 	sig->len += len;
 	va_end(ap);
 	return 1;
+}
+
+const char *
+dkim_domain_select(struct dkim_message *message, char *from)
+{
+	char *mdomain0, *mdomain;
+	size_t i;
+
+	if ((mdomain = mdomain0 = osmtpd_mheader_from_domain(from)) == NULL) {
+		if (errno != EINVAL) {
+			dkim_err(message, "Couldn't parse from header");
+			return NULL;
+		}
+		return NULL;
+	}
+
+	while (mdomain != NULL && mdomain[0] != '\0') {
+		for (i = 0; i < ndomains; i++) {
+			if (strcasecmp(mdomain, domain[i]) == 0) {
+				free(mdomain0);
+				return domain[i];
+			}
+		}
+		if ((mdomain = strchr(mdomain, '.')) != NULL)
+			mdomain++;
+	}
+	free(mdomain0);
+	return NULL;
 }
 
 int
