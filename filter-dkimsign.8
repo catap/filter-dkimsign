@@ -41,11 +41,11 @@ This implementation only supports rsa cryptography.
 Only sha256 should be used for hashing, since other algorithms are most likely
 not supported by verifiers.
 Defaults to
-.Ar rsa-sha256 .
+.Em rsa-sha256 .
 .It Fl c Ar canonicalization
-The canonicalization algorithm used to sign the messge.
+The canonicalization algorithm used to sign the message.
 Defaults to
-.Ar simple/simple .
+.Em simple/simple .
 .It Fl d Ar domain
 The
 .Ar domain
@@ -65,7 +65,7 @@ The email headers which are included in the mail signature.
 Per RFC this option requires at least the from header to be included.
 The headers are specified by separating them with a colon.
 The default is
-from:reply-to:subject:date:to:cc:resent-date:resent-from:resent-to:resent-cc:in-reply-to:references:list-id:list-help:list-unsubscribe:list-subscribe:list-post:list-owner:list-archive .
+.Em from:reply-to:subject:date:to:cc:resent-date:resent-from:resent-to:resent-cc:in-reply-to:references:list-id:list-help:list-unsubscribe:list-subscribe:list-post:list-owner:list-archive .
 .It Fl k Ar file
 .Ar file
 should point to a file containing the RSA private key to sign the messages.
@@ -88,3 +88,14 @@ Useful for debugging purposes.
 .El
 .Sh SEE ALSO
 .Xr smtpd 8
+.Sh STANDARDS
+.Rs
+.%A D. Crocker, Ed.
+.%A T. Hansen, Ed.
+.%A M. Kucherawy, Ed.
+.%D September 2011
+.%R RFC 6376
+.%T DomainKeys Identified Mail (DKIM) Signatures
+.Re
+.Sh AUTHORS
+.An Martijn van Duren Aq Mt martijn@openbsd.org
