@@ -636,6 +636,7 @@ dkim_sign(struct osmtpd_ctx *ctx)
 		tmp[i - 1] = '\0';
 		osmtpd_filter_dataline(ctx, "%s", tmp);
 	}
+	free(tmp);
 }
 
 int
