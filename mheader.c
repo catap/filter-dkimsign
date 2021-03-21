@@ -386,8 +386,10 @@ osmtpd_mheader_skip_obs_phrase(char *ptr, int optional)
 		if ((ptr = osmtpd_mheader_skip_word(ptr, 0)) != NULL)
 			continue;
 		ptr = prev;
-		if (ptr[0] == '.')
+		if (ptr[0] == '.') {
+			ptr++;
 			continue;
+		}
 		if ((ptr = osmtpd_mheader_skip_cfws(ptr, 0)) != NULL)
 			continue;
 		return prev;
