@@ -545,7 +545,8 @@ dkim_sign(struct osmtpd_ctx *ctx)
 
 	if (addtime || addexpire)
 		now = time(NULL);
-	if (addtime && !dkim_signature_printf(message, "t=%lld; ", now))
+	if (addtime && !dkim_signature_printf(message, "t=%lld; ",
+	    (long long)now))
 		return;
 	if (addexpire != 0 && !dkim_signature_printf(message, "x=%lld; ",
 	    now + addexpire < now ? INT64_MAX : now + addexpire))
