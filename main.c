@@ -27,6 +27,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "openbsd-compat.h"
 #include "opensmtpd.h"
 #include "mheader.h"
 
