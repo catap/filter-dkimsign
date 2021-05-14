@@ -264,12 +264,14 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 {
 	struct dkim_message *message;
 
-	if ((message = calloc(1, sizeof(*message))) == NULL)
-		osmtpd_err(1, NULL);
+	if ((message = calloc(1, sizeof(*message))) == NULL) {
+		dkim_err(message, "Failed to create message context");
+		return NULL;
+	}
 
 	if ((message->origf = tmpfile()) == NULL) {
-		dkim_err(message, "Can't open tempfile");
-		return NULL;
+		dkim_err(message, "Failed to open tempfile");
+		goto fail;
 	}
 	message->parsing_headers = 1;
 
@@ -277,7 +279,7 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	message->headers = calloc(1, sizeof(*(message->headers)));
 	if (message->headers == NULL) {
 		dkim_err(message, "Can't save headers");
-		return NULL;
+		goto fail;
 	}
 	message->lastheader = 0;
 	message->signature.signature = NULL;
@@ -290,21 +292,27 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	    cryptalg, hashalg,
 	    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
 	    canonbody == CANON_SIMPLE ? "simple" : "relaxed", selector))
-		return NULL;
+		goto fail;
 	if (addheaders > 0 && !dkim_signature_printf(message, "z="))
-		return NULL;
+		goto fail;
 
 	if ((message->b = EVP_MD_CTX_new()) == NULL ||
 	    (message->bh = EVP_MD_CTX_new()) == NULL) {
-		dkim_errx(message, "Can't create hash context");
-		return NULL;
+		dkim_errx(message, "Failed to create hash context");
+		goto fail;
 	}
 	if (EVP_DigestSignInit(message->b, NULL, hash_md, NULL, pkey) <= 0 ||
 	    EVP_DigestInit_ex(message->bh, hash_md, NULL) == 0) {
 		dkim_errx(message, "Failed to initialize hash context");
-		return NULL;
+		goto fail;
 	}
 	return message;
+fail:
+	free(message->headers);
+	EVP_MD_CTX_free(message->b);
+	EVP_MD_CTX_free(message->bh);
+	free(message);
+	return NULL;
 }
 
 void
