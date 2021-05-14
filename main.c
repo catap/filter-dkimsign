@@ -223,7 +223,7 @@ dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
 
 	linelen = strlen(line);
 	if (fprintf(message->origf, "%s\n", line) < (int) linelen)
-		dkim_err(message, "Couldn't write to tempfile");
+		dkim_errx(message, "Couldn't write to tempfile");
 
 	if (line[0] == '.' && line[1] =='\0') {
 		dkim_sign(ctx);
@@ -516,7 +516,7 @@ dkim_parse_body(struct dkim_message *message, char *line)
 
 	while (message->body_whitelines--) {
 		if (EVP_DigestUpdate(message->bh, "\r\n", 2) == 0) {
-			dkim_err(message, "Can't update hash context");
+			dkim_errx(message, "Can't update hash context");
 			return;
 		}
 	}
@@ -525,7 +525,7 @@ dkim_parse_body(struct dkim_message *message, char *line)
 
 	if (EVP_DigestUpdate(message->bh, line, linelen) == 0 ||
 	    EVP_DigestUpdate(message->bh, "\r\n", 2) == 0) {
-		dkim_err(message, "Can't update hash context");
+		dkim_errx(message, "Can't update hash context");
 		return;
 	}
 }
@@ -555,12 +555,12 @@ dkim_sign(struct osmtpd_ctx *ctx)
 
 	if (canonbody == CANON_SIMPLE && !message->has_body) {
 		if (EVP_DigestUpdate(message->bh, "\r\n", 2) <= 0) {
-			dkim_err(message, "Can't update hash context");
+			dkim_errx(message, "Can't update hash context");
 			return;
 		}
 	}
 	if (EVP_DigestFinal_ex(message->bh, bbh, NULL) == 0) {
-		dkim_err(message, "Can't finalize hash context");
+		dkim_errx(message, "Can't finalize hash context");
 		return;
 	}
 	EVP_EncodeBlock(bh, bbh, EVP_MD_CTX_size(message->bh));
@@ -600,12 +600,12 @@ dkim_sign(struct osmtpd_ctx *ctx)
 	}
 	dkim_parse_header(message, tmp, 1);
 	if (EVP_DigestSignUpdate(message->b, tmp, strlen(tmp)) <= 0) {
-		dkim_err(message, "Failed to update digest context");
+		dkim_errx(message, "Failed to update digest context");
 		return;
 	}
 	free(tmp);
 	if (EVP_DigestSignFinal(message->b, NULL, &linelen) <= 0) {
-		dkim_err(message, "Failed to finalize digest");
+		dkim_errx(message, "Failed to finalize digest");
 		return;
 	}
 	if ((tmp = malloc(linelen)) == NULL) {
@@ -613,7 +613,7 @@ dkim_sign(struct osmtpd_ctx *ctx)
 		return;
 	}
 	if (EVP_DigestSignFinal(message->b, tmp, &linelen) <= 0) {
-		dkim_err(message, "Failed to finalize digest");
+		dkim_errx(message, "Failed to finalize digest");
 		return;
 	}
 	if ((b = malloc((((linelen + 2) / 3) * 4) + 1)) == NULL) {
@@ -798,7 +798,7 @@ dkim_domain_select(struct dkim_message *message, char *from)
 
 	if ((mdomain = mdomain0 = osmtpd_mheader_from_domain(from)) == NULL) {
 		if (errno != EINVAL) {
-			dkim_err(message, "Couldn't parse from header");
+			dkim_errx(message, "Couldn't parse from header");
 			return NULL;
 		}
 		return NULL;
