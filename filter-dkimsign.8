@@ -36,12 +36,17 @@ adds a dkim signature to the message.
 The following flags are supported:
 .Bl -tag -width Ds
 .It Fl a Ar algorithm
-The algorithm to use.
-This implementation only supports rsa cryptography.
+The
+.Ar algorithm
+to use.
+Supported signing algorithms are
+.Em rsa
+and
+.Em ed25519 Pq when enabled at compile time .
 Only sha256 should be used for hashing, since other algorithms are most likely
 not supported by verifiers.
 Defaults to
-.Em rsa-sha256 .
+.Cm rsa-sha256 .
 .It Fl c Ar canonicalization
 The canonicalization algorithm used to sign the message.
 Defaults to

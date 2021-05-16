@@ -13,6 +13,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/sha.h>
@@ -46,8 +47,7 @@ struct dkim_message {
 	int has_body;
 	struct dkim_signature signature;
 	int err;
-	EVP_MD_CTX *b;
-	EVP_MD_CTX *bh;
+	EVP_MD_CTX *dctx;
 };
 
 /* RFC 6376 section 5.4.1 */
@@ -93,6 +93,8 @@ static char *selector = NULL;
 
 static EVP_PKEY *pkey;
 static const EVP_MD *hash_md;
+static int keyid = EVP_PKEY_RSA;
+static int sephash = 0;
 
 #define DKIM_SIGNATURE_LINELEN 78
 
@@ -125,9 +127,20 @@ main(int argc, char *argv[])
 	while ((ch = getopt(argc, argv, "a:c:d:h:k:s:tx:z")) != -1) {
 		switch (ch) {
 		case 'a':
-			if (strncmp(optarg, "rsa-", 4) != 0)
-				osmtpd_err(1, "invalid algorithm");
-			hashalg = optarg + 4;
+			if (strncmp(optarg, "rsa-", 4) == 0) {
+				cryptalg = "rsa";
+				hashalg = optarg + 4;
+				keyid = EVP_PKEY_RSA;
+				sephash = 0;
+#ifdef HAVE_ED25519
+			} else if (strncmp(optarg, "ed25519-", 8) == 0) {
+				hashalg = optarg + 8;
+				cryptalg = "ed25519";
+				keyid = EVP_PKEY_ED25519;
+				sephash = 1;
+#endif
+			} else
+				osmtpd_errx(1, "invalid algorithm");
 			break;
 		case 'c':
 			if (strncmp(optarg, "simple", 6) == 0) {
@@ -167,8 +180,6 @@ main(int argc, char *argv[])
 			pkey = PEM_read_PrivateKey(keyfile, NULL, NULL, NULL);
 			if (pkey == NULL)
 				osmtpd_errx(1, "Can't read key file");
-			if (EVP_PKEY_get0_RSA(pkey) == NULL)
-				osmtpd_err(1, "Key is not of type rsa");
 			fclose(keyfile);
 			break;
 		case 's':
@@ -191,14 +202,18 @@ main(int argc, char *argv[])
 	}
 
 	OpenSSL_add_all_digests();
-	if ((hash_md = EVP_get_digestbyname(hashalg)) == NULL)
-		osmtpd_errx(1, "Can't find hash: %s", hashalg);
 
 	if (pledge("tmppath stdio", NULL) == -1)
 		osmtpd_err(1, "pledge");
 
+	if ((hash_md = EVP_get_digestbyname(hashalg)) == NULL)
+		osmtpd_errx(1, "Can't find hash: %s", hashalg);
+
 	if (domain == NULL || selector == NULL || pkey == NULL)
 		usage();
+
+	if (EVP_PKEY_id(pkey) != keyid)
+		osmtpd_errx(1, "Key is not of type %s", cryptalg);
 
 	osmtpd_register_filter_dataline(dkim_dataline);
 	osmtpd_register_filter_commit(dkim_commit);
@@ -296,21 +311,18 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	if (addheaders > 0 && !dkim_signature_printf(message, "z="))
 		goto fail;
 
-	if ((message->b = EVP_MD_CTX_new()) == NULL ||
-	    (message->bh = EVP_MD_CTX_new()) == NULL) {
+	if ((message->dctx = EVP_MD_CTX_new()) == NULL) {
 		dkim_errx(message, "Failed to create hash context");
 		goto fail;
 	}
-	if (EVP_DigestSignInit(message->b, NULL, hash_md, NULL, pkey) <= 0 ||
-	    EVP_DigestInit_ex(message->bh, hash_md, NULL) == 0) {
+	if (EVP_DigestInit_ex(message->dctx, hash_md, NULL) <= 0) {
 		dkim_errx(message, "Failed to initialize hash context");
 		goto fail;
 	}
 	return message;
 fail:
 	free(message->headers);
-	EVP_MD_CTX_free(message->b);
-	EVP_MD_CTX_free(message->bh);
+	EVP_MD_CTX_free(message->dctx);
 	free(message);
 	return NULL;
 }
@@ -322,8 +334,7 @@ dkim_message_free(struct osmtpd_ctx *ctx, void *data)
 	size_t i;
 
 	fclose(message->origf);
-	EVP_MD_CTX_free(message->b);
-	EVP_MD_CTX_free(message->bh);
+	EVP_MD_CTX_free(message->dctx);
 	free(message->signature.signature);
 	for (i = 0; message->headers[i] != NULL; i++)
 		free(message->headers[i]);
@@ -523,7 +534,7 @@ dkim_parse_body(struct dkim_message *message, char *line)
 	}
 
 	while (message->body_whitelines--) {
-		if (EVP_DigestUpdate(message->bh, "\r\n", 2) == 0) {
+		if (EVP_DigestUpdate(message->dctx, "\r\n", 2) == 0) {
 			dkim_errx(message, "Can't update hash context");
 			return;
 		}
@@ -531,8 +542,8 @@ dkim_parse_body(struct dkim_message *message, char *line)
 	message->body_whitelines = 0;
 	message->has_body = 1;
 
-	if (EVP_DigestUpdate(message->bh, line, linelen) == 0 ||
-	    EVP_DigestUpdate(message->bh, "\r\n", 2) == 0) {
+	if (EVP_DigestUpdate(message->dctx, line, linelen) == 0 ||
+	    EVP_DigestUpdate(message->dctx, "\r\n", 2) == 0) {
 		dkim_errx(message, "Can't update hash context");
 		return;
 	}
@@ -543,14 +554,15 @@ dkim_sign(struct osmtpd_ctx *ctx)
 {
 	struct dkim_message *message = ctx->local_message;
 	/* Use largest hash size here */
-	char bbh[EVP_MAX_MD_SIZE];
-	char bh[(((sizeof(bbh) + 2) / 3) * 4) + 1];
+	char bdigest[EVP_MAX_MD_SIZE];
+	char digest[(((sizeof(bdigest) + 2) / 3) * 4) + 1];
 	char *b;
 	const char *sdomain = domain[0], *tsdomain;
 	time_t now;
 	ssize_t i;
-	size_t linelen;
+	size_t linelen = 0;
 	char *tmp, *tmp2;
+	int digestsz;
 
 	if (addtime || addexpire)
 		now = time(NULL);
@@ -562,28 +574,54 @@ dkim_sign(struct osmtpd_ctx *ctx)
 		return;
 
 	if (canonbody == CANON_SIMPLE && !message->has_body) {
-		if (EVP_DigestUpdate(message->bh, "\r\n", 2) <= 0) {
+		if (EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0) {
 			dkim_errx(message, "Can't update hash context");
 			return;
 		}
 	}
-	if (EVP_DigestFinal_ex(message->bh, bbh, NULL) == 0) {
+	if (EVP_DigestFinal_ex(message->dctx, bdigest, &digestsz) == 0) {
 		dkim_errx(message, "Can't finalize hash context");
 		return;
 	}
-	EVP_EncodeBlock(bh, bbh, EVP_MD_CTX_size(message->bh));
-	if (!dkim_signature_printf(message, "bh=%s; h=", bh))
+	EVP_EncodeBlock(digest, bdigest, digestsz);
+	if (!dkim_signature_printf(message, "bh=%s; h=", digest))
 		return;
 	/* Reverse order for ease of use of RFC6367 section 5.4.2 */
 	for (i = 0; message->headers[i] != NULL; i++)
 		continue;
-	for (i--; i >= 0; i--) {
-		if (EVP_DigestSignUpdate(message->b,
-		    message->headers[i],
-		    strlen(message->headers[i])) <= 0 ||
-		    EVP_DigestSignUpdate(message->b, "\r\n", 2) <= 0) {
-			dkim_errx(message, "Failed to update digest context");
+	EVP_MD_CTX_reset(message->dctx);
+	if (!sephash) {
+		if (EVP_DigestSignInit(message->dctx, NULL, hash_md, NULL,
+		    pkey) != 1) {
+			dkim_errx(message, "Failed to initialize signature "
+			    "context");
 			return;
+		}
+	} else {
+		if (EVP_DigestInit_ex(message->dctx, hash_md, NULL) != 1) {
+			dkim_errx(message, "Failed to initialize hash context");
+			return;
+		}
+	}
+	for (i--; i >= 0; i--) {
+		if (!sephash) {
+			if (EVP_DigestSignUpdate(message->dctx,
+			    message->headers[i],
+			    strlen(message->headers[i])) != 1 ||
+			    EVP_DigestSignUpdate(message->dctx, "\r\n",
+			    2) <= 0) {
+				dkim_errx(message, "Failed to update signature "
+				    "context");
+				return;
+			}
+		} else {
+			if (EVP_DigestUpdate(message->dctx, message->headers[i],
+			    strlen(message->headers[i])) != 1 ||
+			    EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0) {
+				dkim_errx(message, "Failed to update digest "
+				    "context");
+				return;
+			}
 		}
 		if ((tsdomain = dkim_domain_select(message, message->headers[i])) != NULL)
 			sdomain = tsdomain;
@@ -607,22 +645,63 @@ dkim_sign(struct osmtpd_ctx *ctx)
 		return;
 	}
 	dkim_parse_header(message, tmp, 1);
-	if (EVP_DigestSignUpdate(message->b, tmp, strlen(tmp)) <= 0) {
-		dkim_errx(message, "Failed to update digest context");
-		return;
+	if (!sephash) {
+		if (EVP_DigestSignUpdate(message->dctx, tmp,
+		    strlen(tmp)) != 1) {
+			dkim_errx(message, "Failed to update signature "
+			    "context");
+			return;
+		}
+	} else {
+		if (EVP_DigestUpdate(message->dctx, tmp, strlen(tmp)) != 1) {
+			dkim_errx(message, "Failed to update digest context");
+			return;
+		}
 	}
 	free(tmp);
-	if (EVP_DigestSignFinal(message->b, NULL, &linelen) <= 0) {
-		dkim_errx(message, "Failed to finalize digest");
-		return;
+	if (!sephash) {
+		if (EVP_DigestSignFinal(message->dctx, NULL, &linelen) != 1) {
+			dkim_errx(message, "Can't finalize signature context");
+			return;
+		}
+#ifdef HAVE_ED25519
+	} else {
+		if (EVP_DigestFinal_ex(message->dctx, bdigest,
+		    &digestsz) != 1) {
+			dkim_errx(message, "Can't finalize hash context");
+			return;
+		}
+		EVP_MD_CTX_reset(message->dctx);
+		if (EVP_DigestSignInit(message->dctx, NULL, NULL, NULL,
+		    pkey) != 1) {
+			dkim_errx(message, "Failed to initialize signature "
+			    "context");
+			return;
+		}
+		if (EVP_DigestSign(message->dctx, NULL, &linelen, bdigest,
+		    digestsz) != 1) {
+			dkim_errx(message, "Failed to finalize signature");
+			return;
+		}
+#endif
 	}
 	if ((tmp = malloc(linelen)) == NULL) {
-		dkim_err(message, "Can't allocate space for digest");
+		dkim_err(message, "Can't allocate space for signature");
 		return;
 	}
-	if (EVP_DigestSignFinal(message->b, tmp, &linelen) <= 0) {
-		dkim_errx(message, "Failed to finalize digest");
-		return;
+	if (!sephash) {
+		if (EVP_DigestSignFinal(message->dctx, tmp, &linelen) != 1) {
+			dkim_errx(message, "Failed to finalize signature");
+			return;
+		}
+#ifdef HAVE_ED25519
+	} else {
+		if (EVP_DigestSign(message->dctx, tmp, &linelen, bdigest,
+		    digestsz) != 1) {
+			dkim_errx(message, "Failed to finalize signature");
+			return;
+		}
+#endif
 	}
 	if ((b = malloc((((linelen + 2) / 3) * 4) + 1)) == NULL) {
 		dkim_err(message, "Can't create DKIM signature");
