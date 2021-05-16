@@ -568,24 +568,24 @@ dkim_sign(struct osmtpd_ctx *ctx)
 		now = time(NULL);
 	if (addtime && !dkim_signature_printf(message, "t=%lld; ",
 	    (long long)now))
-		return;
+		goto fail;
 	if (addexpire != 0 && !dkim_signature_printf(message, "x=%lld; ",
 	    now + addexpire < now ? INT64_MAX : now + addexpire))
-		return;
+		goto fail;
 
 	if (canonbody == CANON_SIMPLE && !message->has_body) {
 		if (EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0) {
 			dkim_errx(message, "Can't update hash context");
-			return;
+			goto fail;
 		}
 	}
 	if (EVP_DigestFinal_ex(message->dctx, bdigest, &digestsz) == 0) {
 		dkim_errx(message, "Can't finalize hash context");
-		return;
+		goto fail;
 	}
 	EVP_EncodeBlock(digest, bdigest, digestsz);
 	if (!dkim_signature_printf(message, "bh=%s; h=", digest))
-		return;
+		goto fail;
 	/* Reverse order for ease of use of RFC6367 section 5.4.2 */
 	for (i = 0; message->headers[i] != NULL; i++)
 		continue;
@@ -595,12 +595,12 @@ dkim_sign(struct osmtpd_ctx *ctx)
 		    pkey) != 1) {
 			dkim_errx(message, "Failed to initialize signature "
 			    "context");
-			return;
+			goto fail;
 		}
 	} else {
 		if (EVP_DigestInit_ex(message->dctx, hash_md, NULL) != 1) {
 			dkim_errx(message, "Failed to initialize hash context");
-			return;
+			goto fail;
 		}
 	}
 	for (i--; i >= 0; i--) {
@@ -612,7 +612,7 @@ dkim_sign(struct osmtpd_ctx *ctx)
 			    2) <= 0) {
 				dkim_errx(message, "Failed to update signature "
 				    "context");
-				return;
+				goto fail;
 			}
 		} else {
 			if (EVP_DigestUpdate(message->dctx, message->headers[i],
@@ -620,7 +620,7 @@ dkim_sign(struct osmtpd_ctx *ctx)
 			    EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0) {
 				dkim_errx(message, "Failed to update digest "
 				    "context");
-				return;
+				goto fail;
 			}
 		}
 		if ((tsdomain = dkim_domain_select(message, message->headers[i])) != NULL)
@@ -635,14 +635,14 @@ dkim_sign(struct osmtpd_ctx *ctx)
 		if (!dkim_signature_printf(message, "%s%s",
 		    message->headers[i + 1] == NULL  ? "" : ":",
 		    message->headers[i]))
-			return;
+			goto fail;
 	}
 	dkim_signature_printf(message, "; d=%s; b=", sdomain);
 	if (!dkim_signature_normalize(message))
-		return;
+		goto fail;
 	if ((tmp = strdup(message->signature.signature)) == NULL) {
 		dkim_err(message, "Can't create DKIM signature");
-		return;
+		goto fail;
 	}
 	dkim_parse_header(message, tmp, 1);
 	if (!sephash) {
@@ -650,62 +650,62 @@ dkim_sign(struct osmtpd_ctx *ctx)
 		    strlen(tmp)) != 1) {
 			dkim_errx(message, "Failed to update signature "
 			    "context");
-			return;
+			goto fail;
 		}
 	} else {
 		if (EVP_DigestUpdate(message->dctx, tmp, strlen(tmp)) != 1) {
 			dkim_errx(message, "Failed to update digest context");
-			return;
+			goto fail;
 		}
 	}
 	free(tmp);
 	if (!sephash) {
 		if (EVP_DigestSignFinal(message->dctx, NULL, &linelen) != 1) {
 			dkim_errx(message, "Can't finalize signature context");
-			return;
+			goto fail;
 		}
 #ifdef HAVE_ED25519
 	} else {
 		if (EVP_DigestFinal_ex(message->dctx, bdigest,
 		    &digestsz) != 1) {
 			dkim_errx(message, "Can't finalize hash context");
-			return;
+			goto fail;
 		}
 		EVP_MD_CTX_reset(message->dctx);
 		if (EVP_DigestSignInit(message->dctx, NULL, NULL, NULL,
 		    pkey) != 1) {
 			dkim_errx(message, "Failed to initialize signature "
 			    "context");
-			return;
+			goto fail;
 		}
 		if (EVP_DigestSign(message->dctx, NULL, &linelen, bdigest,
 		    digestsz) != 1) {
 			dkim_errx(message, "Failed to finalize signature");
-			return;
+			goto fail;
 		}
 #endif
 	}
 	if ((tmp = malloc(linelen)) == NULL) {
 		dkim_err(message, "Can't allocate space for signature");
-		return;
+		goto fail;
 	}
 	if (!sephash) {
 		if (EVP_DigestSignFinal(message->dctx, tmp, &linelen) != 1) {
 			dkim_errx(message, "Failed to finalize signature");
-			return;
+			goto fail;
 		}
 #ifdef HAVE_ED25519
 	} else {
 		if (EVP_DigestSign(message->dctx, tmp, &linelen, bdigest,
 		    digestsz) != 1) {
 			dkim_errx(message, "Failed to finalize signature");
-			return;
+			goto fail;
 		}
 #endif
 	}
 	if ((b = malloc((((linelen + 2) / 3) * 4) + 1)) == NULL) {
 		dkim_err(message, "Can't create DKIM signature");
-		return;
+		goto fail;
 	}
 	EVP_EncodeBlock(b, tmp, linelen);
 	free(tmp);
@@ -726,6 +726,9 @@ dkim_sign(struct osmtpd_ctx *ctx)
 		osmtpd_filter_dataline(ctx, "%s", tmp);
 	}
 	free(tmp);
+	return;
+fail:
+	osmtpd_filter_dataline(ctx, ".");
 }
 
 int
