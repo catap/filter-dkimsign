@@ -522,7 +522,7 @@ osmtpd_mheader_skip_display_name(char *ptr, int optional)
 char *
 osmtpd_mheader_skip_obs_domain_list(char *ptr, int optional)
 {
-	char *start = ptr, *prev;
+	char *start = ptr, *prev = ptr;
 
 	while (1) {
 		if (ptr[0] == ',') {
