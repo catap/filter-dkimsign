@@ -8,7 +8,10 @@ SRCS+=		main.c mheader.c
 
 .ifdef LIBCRYPTOPC
 CRYPT_CFLAGS!=	pkg-config --cflags ${LIBCRYPTOPC}
-CRYPT_LDFLAGS!=	pkg-config --libs-only-L ${LIBCRYPTOPC}
+CRYPT_LDFLAGS_L!=pkg-config --libs-only-L ${LIBCRYPTOPC}
+CRYPT_LDFLAGS_libdir!=pkg-config --variable libdir ${LIBCRYPTOPC}
+CRYPT_LDFLAGS=	${CRYPT_LDFLAGS_L}
+CRYPT_LDFLAGS+=	-Wl,-rpath,${CRYPT_LDFLAGS_libdir}
 CRYPT_LDADD!=	pkg-config --libs-only-l ${LIBCRYPTOPC}
 .else
 CRYPT_CFLAGS=
