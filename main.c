@@ -554,15 +554,15 @@ dkim_sign(struct osmtpd_ctx *ctx)
 {
 	struct dkim_message *message = ctx->local_message;
 	/* Use largest hash size here */
-	char bdigest[EVP_MAX_MD_SIZE];
-	char digest[(((sizeof(bdigest) + 2) / 3) * 4) + 1];
-	char *b;
+	unsigned char bdigest[EVP_MAX_MD_SIZE];
+	unsigned char digest[(((sizeof(bdigest) + 2) / 3) * 4) + 1];
+	unsigned char *b;
 	const char *sdomain = domain[0], *tsdomain;
 	time_t now;
 	ssize_t i;
 	size_t linelen = 0;
 	char *tmp, *tmp2;
-	int digestsz;
+	unsigned int digestsz;
 
 	if (addtime || addexpire)
 		now = time(NULL);
