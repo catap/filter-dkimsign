@@ -1,4 +1,5 @@
 LOCALBASE?=	/usr/local/
+
 PROG=		filter-dkimsign
 MAN=		filter-dkimsign.8
 BINDIR=		${LOCALBASE}/libexec/smtpd/
@@ -6,6 +7,9 @@ MANDIR=		${LOCALBASE}/man/man
 
 SRCS+=		main.c mheader.c
 
+.ifdef HAVE_ED25519
+CFLAGS+=	-DHAVE_ED25519
+.endif
 .ifdef LIBCRYPTOPC
 CRYPT_CFLAGS!=	pkg-config --cflags ${LIBCRYPTOPC}
 CRYPT_LDFLAGS_L!=pkg-config --libs-only-L ${LIBCRYPTOPC}
@@ -26,9 +30,6 @@ CFLAGS+=	-Wmissing-declarations
 CFLAGS+=	-Wshadow -Wpointer-arith -Wcast-qual
 CFLAGS+=	-Wsign-compare
 CFLAGS+=	${CRYPT_CFLAGS}
-.ifdef HAVE_ED25519
-CFLAGS+=	-DHAVE_ED25519
-.endif
 
 LDFLAGS+=	-L${LOCALBASE}/lib
 LDFLAGS+=	${CRYPT_LDFLAGS}
