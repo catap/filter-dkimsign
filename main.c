@@ -321,9 +321,7 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	}
 	return message;
 fail:
-	free(message->headers);
-	EVP_MD_CTX_free(message->dctx);
-	free(message);
+	dkim_message_free(ctx, message);
 	return NULL;
 }
 
@@ -336,7 +334,8 @@ dkim_message_free(struct osmtpd_ctx *ctx, void *data)
 	fclose(message->origf);
 	EVP_MD_CTX_free(message->dctx);
 	free(message->signature.signature);
-	for (i = 0; message->headers[i] != NULL; i++)
+	for (i = 0; message->headers != NULL &&
+	    message->headers[i] != NULL; i++)
 		free(message->headers[i]);
 	free(message->headers);
 	free(message);
@@ -478,7 +477,10 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 		}
 		message->headers = mtmp;
 
-		message->headers[lastheader] = strdup(line);
+		if ((message->headers[lastheader] = strdup(line)) == NULL) {
+			dkim_err(message, "Can't store header");
+			return;
+		}
 		message->headers[lastheader + 1 ] = NULL;
 		message->lastheader = 1;
 	} else {
