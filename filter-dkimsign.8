@@ -28,6 +28,7 @@
 .Op Fl h Ar headers
 .Op Fl x Ar seconds
 .Fl d Ar domain
+.Fl D Ar file
 .Fl k Ar file
 .Fl s Ar selector
 .Sh DESCRIPTION
@@ -51,6 +52,13 @@ Defaults to
 The canonicalization algorithm used to sign the message.
 Defaults to
 .Em simple/simple .
+.It Fl D Ar file
+.Ar file
+should point to a file containing a list of domains.
+Only one domain per line should be specified.
+See
+.Fl d
+for more information.
 .It Fl d Ar domain
 The
 .Ar domain

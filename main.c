@@ -99,6 +99,7 @@ static int sephash = 0;
 #define DKIM_SIGNATURE_LINELEN 78
 
 void usage(void);
+void dkim_adddomain(char *);
 void dkim_err(struct dkim_message *, char *);
 void dkim_errx(struct dkim_message *, char *);
 void dkim_headers_set(char *);
@@ -121,10 +122,13 @@ int
 main(int argc, char *argv[])
 {
 	int ch;
-	FILE *keyfile;
+	FILE *file;
+	char *line;
+	size_t linesz;
+	ssize_t linelen;
 	const char *errstr;
 
-	while ((ch = getopt(argc, argv, "a:c:d:h:k:s:tx:z")) != -1) {
+	while ((ch = getopt(argc, argv, "a:c:D:d:h:k:s:tx:z")) != -1) {
 		switch (ch) {
 		case 'a':
 			if (strncmp(optarg, "rsa-", 4) == 0) {
@@ -164,23 +168,39 @@ main(int argc, char *argv[])
 			else
 				osmtpd_err(1, "Invalid canonicalization");
 			break;
+		case 'D':
+			if ((file = fopen(optarg, "r")) == NULL)
+				osmtpd_err(1, "Can't open domain file (%s)",
+				    optarg);
+			do {
+				line = NULL;
+				linesz = 0;
+				linelen = getline(&line, &linesz, file);
+				if (linelen > 0) {
+					if (line[linelen - 1] == '\n')
+						line[linelen - 1] = '\0';
+					dkim_adddomain(line);
+				}
+			} while (linelen != -1);
+			if (ferror(file))
+				osmtpd_err(1, "Error reading domain file (%s)",
+				    optarg);
+			fclose(file);
+			break;
 		case 'd':
-			if ((domain = reallocarray(domain, ndomains + 1,
-			    sizeof(*domain))) == NULL)
-				osmtpd_err(1, "malloc");
-			domain[ndomains++] = optarg;
+			dkim_adddomain(optarg);
 			break;
 		case 'h':
 			dkim_headers_set(optarg);
 			break;
 		case 'k':
-			if ((keyfile = fopen(optarg, "r")) == NULL)
+			if ((file = fopen(optarg, "r")) == NULL)
 				osmtpd_err(1, "Can't open key file (%s)",
 				    optarg);
-			pkey = PEM_read_PrivateKey(keyfile, NULL, NULL, NULL);
+			pkey = PEM_read_PrivateKey(file, NULL, NULL, NULL);
 			if (pkey == NULL)
 				osmtpd_errx(1, "Can't read key file");
-			fclose(keyfile);
+			fclose(file);
 			break;
 		case 's':
 			selector = optarg;
@@ -221,6 +241,16 @@ main(int argc, char *argv[])
 	osmtpd_run();
 
 	return 0;
+}
+
+void
+dkim_adddomain(char *d)
+{
+	domain = reallocarray(domain, ndomains + 1, sizeof(*domain));
+	if (domain == NULL)
+		osmtpd_err(1, "malloc");
+	domain[ndomains++] = d;
+	
 }
 
 void
@@ -932,6 +962,6 @@ usage(void)
 {
 	fprintf(stderr, "usage: filter-dkimsign [-tz] [-a signalg] "
 	    "[-c canonicalization] \n    [-h headerfields]"
-	    "[-x seconds] -d domain -k keyfile -s selector\n");
+	    "[-x seconds] -D file -d domain -k keyfile -s selector\n");
 	exit(1);
 }
