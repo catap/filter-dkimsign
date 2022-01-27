@@ -22,6 +22,7 @@
 
 #include "mheader.h"
 
+#include <stdio.h>
 char *
 osmtpd_mheader_skip_sp(char *ptr, int optional)
 {
@@ -481,6 +482,7 @@ osmtpd_mheader_skip_domain_literal(char *ptr, int optional)
 	}
 	if (ptr[0] != ']')
 		return optional ? start : NULL;
+	ptr++;
 	return osmtpd_mheader_skip_cfws(ptr, 1);
 }
 
@@ -626,6 +628,41 @@ osmtpd_mheader_skip_name_addr(char *ptr, int optional)
 	return ptr;
 }
 
+char *
+osmtpd_mheader_domain_uncomment(char *ptr)
+{
+	char *domain0, *domain, *tmp, *end;
+
+	if (osmtpd_mheader_skip_dot_atom(ptr, 0) != NULL) {
+		ptr = osmtpd_mheader_skip_cfws(ptr, 1);
+		return strndup(ptr,
+		    osmtpd_mheader_skip_dot_atom_text(ptr, 0) - ptr);
+	}
+	if ((tmp = osmtpd_mheader_skip_domain_literal(ptr, 0)) != NULL) {
+		ptr = osmtpd_mheader_skip_cfws(ptr, 1) + 1;
+		domain0 = domain = strndup(ptr, (size_t)(tmp - ptr));
+		if (domain0 == NULL)
+			return NULL;
+		end = domain0 + (tmp - ptr) + 1;
+		domain++;
+		while (1) {
+			tmp = osmtpd_mheader_skip_fws(domain, 1);
+			if (tmp != domain) {
+				memmove(domain, tmp, end - tmp);
+				end -= (tmp - domain);
+			}
+			tmp = osmtpd_mheader_skip_dtext(domain, 0);
+			if (tmp == NULL)
+				break;
+			domain = tmp;
+		}
+		/* domain[0] ==  ']' */
+		domain[0] = '\0';
+		return domain0;
+	}
+	return strndup(ptr, osmtpd_mheader_skip_obs_domain(ptr, 1) - ptr);
+}
+
 /* Return the domain component of the first mailbox */
 char *
 osmtpd_mheader_from_domain(char *ptr)
@@ -669,15 +706,13 @@ osmtpd_mheader_from_domain(char *ptr)
 		ptr = osmtpd_mheader_skip_local_part(ptr, 0);
 		/* @ */
 		ptr++;
-		tmp = osmtpd_mheader_skip_domain(ptr, 0);
-		return strndup(ptr, tmp - ptr);
+		return osmtpd_mheader_domain_uncomment(ptr);
 	}
 	if (osmtpd_mheader_skip_addr_spec(ptr, 0) != NULL) {
 		ptr = osmtpd_mheader_skip_local_part(ptr, 0);
 		/* @ */
 		ptr++;
-		tmp = osmtpd_mheader_skip_domain(ptr, 0);
-		return strndup(ptr, tmp - ptr);
+		return osmtpd_mheader_domain_uncomment(ptr);
 	}
 	errno = EINVAL;
 	return NULL;

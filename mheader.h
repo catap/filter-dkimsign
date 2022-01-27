@@ -60,4 +60,5 @@ char *osmtpd_mheader_skip_obs_angle_addr(char *, int);
 char *osmtpd_mheader_skip_angle_addr(char *, int);
 char *osmtpd_mheader_skip_name_addr(char *, int);
 
+char *osmtpd_mheader_domain_uncomment(char *);
 char *osmtpd_mheader_from_domain(char *);
