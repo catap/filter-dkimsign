@@ -7,9 +7,6 @@ MANDIR=		${LOCALBASE}/share/man/man8
 
 SRCS+=		main.c mheader.c
 
-ifdef HAVE_ED25519
-CFLAGS+=	-DHAVE_ED25519
-endif
 ifdef LIBCRYPTOPC
 CRYPT_CFLAGS!=	pkg-config --cflags ${LIBCRYPTOPC}
 CRYPT_LDFLAGS_L!=pkg-config --libs-only-L ${LIBCRYPTOPC}
