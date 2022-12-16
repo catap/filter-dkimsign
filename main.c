@@ -136,11 +136,13 @@ main(int argc, char *argv[])
 				hashalg = optarg + 4;
 				keyid = EVP_PKEY_RSA;
 				sephash = 0;
+#ifdef HAVE_ED25519
 			} else if (strncmp(optarg, "ed25519-", 8) == 0) {
 				hashalg = optarg + 8;
 				cryptalg = "ed25519";
 				keyid = EVP_PKEY_ED25519;
 				sephash = 1;
+#endif
 			} else
 				osmtpd_errx(1, "invalid algorithm");
 			break;
@@ -694,6 +696,7 @@ dkim_sign(struct osmtpd_ctx *ctx)
 			dkim_errx(message, "Can't finalize signature context");
 			goto fail;
 		}
+#ifdef HAVE_ED25519
 	} else {
 		if (EVP_DigestFinal_ex(message->dctx, bdigest,
 		    &digestsz) != 1) {
@@ -712,6 +715,7 @@ dkim_sign(struct osmtpd_ctx *ctx)
 			dkim_errx(message, "Failed to finalize signature");
 			goto fail;
 		}
+#endif
 	}
 	if ((tmp = malloc(linelen)) == NULL) {
 		dkim_err(message, "Can't allocate space for signature");
@@ -722,12 +726,14 @@ dkim_sign(struct osmtpd_ctx *ctx)
 			dkim_errx(message, "Failed to finalize signature");
 			goto fail;
 		}
+#ifdef HAVE_ED25519
 	} else {
 		if (EVP_DigestSign(message->dctx, tmp, &linelen, bdigest,
 		    digestsz) != 1) {
 			dkim_errx(message, "Failed to finalize signature");
 			goto fail;
 		}
+#endif
 	}
 	if ((b = malloc((((linelen + 2) / 3) * 4) + 1)) == NULL) {
 		dkim_err(message, "Can't create DKIM signature");
