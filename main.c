@@ -179,6 +179,8 @@ main(int argc, char *argv[])
 				if (linelen > 0) {
 					if (line[linelen - 1] == '\n')
 						line[linelen - 1] = '\0';
+					if (*line == '#' || *line == '\0')
+						continue;
 					dkim_adddomain(line);
 				}
 			} while (linelen != -1);
