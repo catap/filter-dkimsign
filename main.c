@@ -1,4 +1,5 @@
 /*
+ * Copyright (c) 2024 Kirill A. Korinsky <kirill@korins.ky>
  * Copyright (c) 2019 Martijn van Duren <martijn@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
