@@ -33,6 +33,14 @@
 #include "opensmtpd.h"
 #include "mheader.h"
 
+/* RFC 8617 Section 3.9 */
+enum ar_chain_status {
+	AR_UNKNOWN,
+	AR_NONE,
+	AR_PASS,
+	AR_FAIL
+};
+
 struct dkim_signature {
 	char *signature;
 	size_t size;
@@ -41,6 +49,9 @@ struct dkim_signature {
 
 struct dkim_message {
 	FILE *origf;
+	int arc_i;
+	char *arc_ar;
+	enum ar_chain_status arc_cv;
 	int parsing_headers;
 	char **headers;
 	int lastheader;
@@ -73,6 +84,14 @@ static char *dsign_headers[] = {
 	"list-owner",
 	"list-archive"
 };
+
+/* RFC8617 Section 5.1.1 */
+static char *arc_seal_headers[] = {
+	"ARC-Authentication-Results",
+	"ARC-Message-Signature",
+	"ARC-Seal"
+};
+
 static char **sign_headers = dsign_headers;
 static size_t nsign_headers = sizeof(dsign_headers) / sizeof(*dsign_headers);
 
@@ -99,6 +118,13 @@ static int sephash = 0;
 
 #define DKIM_SIGNATURE_LINELEN 78
 
+/* RFC 8617 Section 4.2.1 */
+#define ARC_MIN_I 1
+#define ARC_MAX_I 50
+
+static int dkim = 1;
+static int seal = 0;
+
 void usage(void);
 void dkim_adddomain(char *);
 void dkim_err(struct dkim_message *, char *);
@@ -110,6 +136,7 @@ void *dkim_message_new(struct osmtpd_ctx *);
 void dkim_message_free(struct osmtpd_ctx *, void *);
 void dkim_parse_header(struct dkim_message *, char *, int);
 void dkim_parse_body(struct dkim_message *, char *);
+const char *ar_chain_status2str(enum ar_chain_status);
 void dkim_sign(struct osmtpd_ctx *);
 int dkim_signature_printheader(struct dkim_message *, const char *);
 int dkim_signature_printf(struct dkim_message *, char *, ...)
@@ -129,8 +156,11 @@ main(int argc, char *argv[])
 	ssize_t linelen;
 	const char *errstr;
 
-	while ((ch = getopt(argc, argv, "a:c:D:d:h:k:s:tx:z")) != -1) {
+	while ((ch = getopt(argc, argv, "Aa:c:D:d:h:k:Ss:tx:z")) != -1) {
 		switch (ch) {
+		case 'A':
+			dkim = 0;
+			break;
 		case 'a':
 			if (strncmp(optarg, "rsa-", 4) == 0) {
 				cryptalg = "rsa";
@@ -194,6 +224,8 @@ main(int argc, char *argv[])
 			dkim_adddomain(optarg);
 			break;
 		case 'h':
+			if (seal)
+				osmtpd_errx(1, "ARC-Seal requires predefinded headers");
 			dkim_headers_set(optarg);
 			break;
 		case 'k':
@@ -204,6 +236,13 @@ main(int argc, char *argv[])
 			if (pkey == NULL)
 				osmtpd_errx(1, "Can't read key file");
 			fclose(file);
+			break;
+		case 'S':
+			dkim = 0;
+			seal = 1;
+			canonheader = CANON_RELAXED;
+			sign_headers = arc_seal_headers;
+			nsign_headers = sizeof(arc_seal_headers) / sizeof(*arc_seal_headers);
 			break;
 		case 's':
 			selector = optarg;
@@ -223,6 +262,12 @@ main(int argc, char *argv[])
 			usage();
 		}
 	}
+
+	if (dkim && seal)
+		osmtpd_errx(1, "Can't make DKIM and ARC-Seal at the same time");
+
+	if (seal && canonheader != CANON_RELAXED)
+		osmtpd_errx(1, "ARC-Seal requires relaxed canonicalization");
 
 	OpenSSL_add_all_digests();
 
@@ -283,10 +328,11 @@ dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
 		dkim_parse_header(message, linedup, 0);
 		free(linedup);
 	} else if (linelen == 0 && message->parsing_headers) {
-		if (addheaders > 0 && !dkim_signature_printf(message, "; "))
+		if (dkim && addheaders > 0 &&
+			!dkim_signature_printf(message, "; "))
 			return;
 		message->parsing_headers = 0;
-	} else {
+	} else if (!seal) {
 		if (line[0] == '.')
 			line++;
 		if ((linedup = strdup(line)) == NULL)
@@ -335,13 +381,19 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	message->signature.len = 0;
 	message->err = 0;
 
-	if (!dkim_signature_printf(message,
+	if (dkim && !dkim_signature_printf(message,
 	    "DKIM-Signature: v=%s; a=%s-%s; c=%s/%s; s=%s; ", "1",
 	    cryptalg, hashalg,
 	    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
 	    canonbody == CANON_SIMPLE ? "simple" : "relaxed", selector))
 		goto fail;
-	if (addheaders > 0 && !dkim_signature_printf(message, "z="))
+	if (seal && !dkim_signature_printf(message, "ARC-Seal: "))
+		goto fail;
+	if (!dkim && !seal &&
+		!dkim_signature_printf(message, "ARC-Message-Signature: "))
+		goto fail;
+	if (dkim && addheaders > 0 &&
+		!dkim_signature_printf(message, "z="))
 		goto fail;
 
 	if ((message->dctx = EVP_MD_CTX_new()) == NULL) {
@@ -431,6 +483,7 @@ dkim_errx(struct dkim_message *message, char *msg)
 void
 dkim_parse_header(struct dkim_message *message, char *line, int force)
 {
+	long li;
 	size_t i;
 	size_t r, w;
 	size_t linelen;
@@ -441,14 +494,110 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 	char *htmp;
 	char *tmp;
 
-	if (addheaders == 2 && !force &&
+	if (dkim && addheaders == 2 && !force &&
 	    !dkim_signature_printheader(message, line))
 		return;
 
-	if ((line[0] == ' ' || line[0] == '\t') && !message->lastheader)
-		return;
+	if ((line[0] == ' ' || line[0] == '\t')) {
+		/* concat ARC-AR header */
+		if (!dkim && message->arc_i == -1) {
+			linelen = 1;
+			linelen += strlen(line);
+			linelen += strlen(message->arc_ar);
+			htmp = reallocarray(message->arc_ar, linelen, sizeof(*htmp));
+			if (htmp == NULL) {
+				dkim_err(message, "Can't store header");
+				return;
+			}
+			message->arc_ar = htmp;
+			if (strlcat(htmp, line, linelen) >= linelen) {
+				dkim_errx(message, "Missized header");
+				return;
+			}
+		}
+		if (!message->lastheader)
+			return;
+	}
 	if ((line[0] != ' ' && line[0] != '\t')) {
 		message->lastheader = 0;
+		/* The next header, parse captured ARC-AR */
+		if (!dkim && message->arc_i == -1) {
+			message->arc_i = -2;
+			hlen = 0;
+			if (message->arc_ar[hlen] != 'i')
+				goto skpi_arc_ar;
+			hlen++;
+			while (message->arc_ar[hlen] == ' ' ||
+				   message->arc_ar[hlen] == '\t')
+				hlen++;
+			if (message->arc_ar[hlen] != '=')
+				goto skpi_arc_ar;
+			hlen++;
+			li = strtol(message->arc_ar + hlen, &htmp, 10);
+			if (li < ARC_MIN_I || li > ARC_MAX_I)
+				goto skpi_arc_ar;
+			message->arc_i = li;
+			hlen = htmp - message->arc_ar;
+			while (message->arc_ar[hlen] != '\0') {
+				while (message->arc_ar[hlen] != '\0' &&
+					   message->arc_ar[hlen] != ' ' &&
+					   message->arc_ar[hlen] != '\t') {
+					/* skip quoted strings */
+					if (message->arc_ar[hlen] == '"')
+						while (message->arc_ar[hlen] != '\0' &&
+							   message->arc_ar[hlen] != '"')
+							hlen++;
+					hlen++;
+				}
+				while (message->arc_ar[hlen] == ' ' ||
+					   message->arc_ar[hlen] == '\t')
+					hlen++;
+				if (message->arc_ar[hlen] == '\0')
+					break;
+				if (strncasecmp("arc", message->arc_ar + hlen, 3) != 0) {
+					hlen++;
+					continue;
+				}
+				hlen += 3;
+				while (message->arc_ar[hlen] == ' ' ||
+					   message->arc_ar[hlen] == '\t')
+					hlen++;
+				if (message->arc_ar[hlen] != '=')
+					continue;
+				hlen++;
+				while (message->arc_ar[hlen] == ' ' ||
+					   message->arc_ar[hlen] == '\t')
+					hlen++;
+				if (!strncasecmp("none", message->arc_ar + hlen, 4)) {
+					hlen += 4;
+					message->arc_cv = AR_NONE;
+				}
+				else if (!strncasecmp("pass", message->arc_ar + hlen, 4)) {
+					hlen += 4;
+					message->arc_cv = AR_PASS;
+				} else
+					message->arc_cv = AR_FAIL;
+				if (message->arc_ar[hlen] != '\0' &&
+					message->arc_ar[hlen] != ' ' &&
+					message->arc_ar[hlen] != '\t' &&
+					message->arc_ar[hlen] != ';')
+					message->arc_cv = AR_FAIL;
+				break;
+			}
+		}
+skpi_arc_ar:
+		/* Capture the first ARC-AR header */
+		hlen = sizeof("ARC-Authentication-Results:") - 1;
+		if (!dkim && message->arc_ar == NULL &&
+			strncasecmp("ARC-Authentication-Results:", line, hlen) == 0) {
+			while (line[hlen] == ' ' || line[hlen] == '\t')
+				hlen++;
+			message->arc_i = -1;
+			if ((message->arc_ar = strdup(line + hlen)) == NULL) {
+				dkim_err(message, "Can't store header");
+				return;
+			}
+		}
 		for (i = 0; i < nsign_headers; i++) {
 			hlen = strlen(sign_headers[i]);
 			if  (strncasecmp(line, sign_headers[i], hlen) == 0) {
@@ -463,7 +612,7 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 			return;
 	}
 
-	if (addheaders == 1 && !force &&
+	if (dkim && addheaders == 1 && !force &&
 	    !dkim_signature_printheader(message, line))
 		return;
 
@@ -584,6 +733,22 @@ dkim_parse_body(struct dkim_message *message, char *line)
 	}
 }
 
+const char *
+ar_chain_status2str(enum ar_chain_status status)
+{
+	switch (status)
+	{
+	case AR_UNKNOWN:
+		return "unknown";
+	case AR_NONE:
+		return "none";
+	case AR_PASS:
+		return "pass";
+	case AR_FAIL:
+		return "fail";
+	}
+}
+
 void
 dkim_sign(struct osmtpd_ctx *ctx)
 {
@@ -599,14 +764,37 @@ dkim_sign(struct osmtpd_ctx *ctx)
 	char *tmp, *tmp2;
 	unsigned int digestsz;
 
+	if (!dkim && message->arc_i < ARC_MIN_I) {
+		dkim_errx(message, "Can't parse ACR-AR header");
+		goto fail;
+	}
+
+	if (!dkim && !dkim_signature_printf(message,
+		"i=%d; a=%s-%s; s=%s; ",
+		message->arc_i, cryptalg, hashalg, selector))
+		goto fail;
+
+	if (!dkim && !seal && !dkim_signature_printf(message, "c=%s/%s; ",
+	    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
+	    canonbody == CANON_SIMPLE ? "simple" : "relaxed"))
+		goto fail;
+
+	if (seal && !dkim_signature_printf(message, "cv=%s; ",
+		ar_chain_status2str(message->arc_cv)))
+		goto fail;
+
 	if (addtime || addexpire)
 		now = time(NULL);
 	if (addtime && !dkim_signature_printf(message, "t=%lld; ",
 	    (long long)now))
 		goto fail;
-	if (addexpire != 0 && !dkim_signature_printf(message, "x=%lld; ",
+	if (!seal && addexpire != 0 &&
+		!dkim_signature_printf(message, "x=%lld; ",
 	    now + addexpire < now ? INT64_MAX : now + addexpire))
 		goto fail;
+
+	if(seal)
+		goto skip_seal;
 
 	if (canonbody == CANON_SIMPLE && !message->has_body) {
 		if (EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0) {
@@ -621,6 +809,8 @@ dkim_sign(struct osmtpd_ctx *ctx)
 	EVP_EncodeBlock(digest, bdigest, digestsz);
 	if (!dkim_signature_printf(message, "bh=%s; h=", digest))
 		goto fail;
+
+skip_seal:
 	/* Reverse order for ease of use of RFC6367 section 5.4.2 */
 	for (i = 0; message->headers[i] != NULL; i++)
 		continue;
@@ -667,12 +857,15 @@ dkim_sign(struct osmtpd_ctx *ctx)
 			tmp[0] = tolower(tmp[0]);
 		}
 		tmp[0] = '\0';
-		if (!dkim_signature_printf(message, "%s%s",
+		if (!seal && !dkim_signature_printf(message, "%s%s",
 		    message->headers[i + 1] == NULL  ? "" : ":",
 		    message->headers[i]))
 			goto fail;
 	}
-	dkim_signature_printf(message, "; d=%s; b=", sdomain);
+	if (!seal && !dkim_signature_printf(message, "; d=%s; b=", sdomain))
+		goto fail;
+	if (seal && !dkim_signature_printf(message, "d=%s; b=", sdomain))
+		goto fail;
 	if (!dkim_signature_normalize(message))
 		goto fail;
 	if ((tmp = strdup(message->signature.signature)) == NULL) {
@@ -963,7 +1156,7 @@ dkim_signature_need(struct dkim_message *message, size_t len)
 __dead void
 usage(void)
 {
-	fprintf(stderr, "usage: filter-dkimsign [-tz] [-a signalg] "
+	fprintf(stderr, "usage: filter-dkimsign [-tz] [-A] [-S] [-a signalg] "
 	    "[-c canonicalization] \n    [-h headerfields]"
 	    "[-x seconds] -D file -d domain -k keyfile -s selector\n");
 	exit(1);

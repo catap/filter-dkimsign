@@ -19,10 +19,12 @@
 .Os
 .Sh NAME
 .Nm filter-dkimsign
-.Nd add dkim signature to messages
+.Nd add DKIM or ARC signature to messages
 .Sh SYNOPSIS
 .Nm
 .Op Fl tz
+.Op Fl A
+.Op Fl S
 .Op Fl a Ar algorithm
 .Op Fl c Ar canonicalization
 .Op Fl h Ar headers
@@ -33,9 +35,15 @@
 .Fl s Ar selector
 .Sh DESCRIPTION
 .Nm
-adds a dkim signature to the message.
+adds a DKIM or ARC signature to the message.
 The following flags are supported:
 .Bl -tag -width Ds
+.It Fl A
+Produce ARC signature, and use
+.Em i
+from the first
+.Em ARC-Message-Signature
+header.
 .It Fl a Ar algorithm
 The
 .Ar algorithm
@@ -82,6 +90,16 @@ The default is
 .It Fl k Ar file
 .Ar file
 should point to a file containing the RSA private key to sign the messages.
+.It Fl S
+Produce ARC seal, and use
+.Em i
+and
+.Em arc
+property as
+.Em cv
+from the first
+.Em ARC-Message-Signature
+header.
 .It Fl s Ar selector
 The selector within the _domainkey subdomain of
 .Ar domain
@@ -120,6 +138,26 @@ Useful for debugging purposes.
 .%D September 2018
 .%R RFC 8463
 .%T A New Cryptographic Signature Method for DomainKeys Identified Mail
+.Re
+.Pp
+.Rs
+.%A M. Kucherawy
+.%D May 2019
+.%R RFC 8601
+.%T Message Header Field for Indicating Message Authentication Status
+.Re
+.Pp
+.Rs
+.%A K. Andersen
+.%Q LinkedIn
+.%A B. Long, Ed.
+.%Q Google
+.%A S. Blank, Ed.
+.%Q Valimail
+.%A M. Kucherawy, Ed.
+.%D July 2019
+.%R RFC 8601
+.%T The Authenticated Received Chain (ARC) Protocol
 .Re
 .Sh AUTHORS
 .An Martijn van Duren Aq Mt martijn@openbsd.org
