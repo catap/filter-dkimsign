@@ -42,13 +42,13 @@ enum ar_chain_status {
 	AR_FAIL
 };
 
-struct dkim_signature {
+struct signature {
 	char *signature;
 	size_t size;
 	size_t len;
 };
 
-struct dkim_message {
+struct message {
 	FILE *origf;
 	int arc_i;
 	char *arc_ar;
@@ -58,7 +58,7 @@ struct dkim_message {
 	int lastheader;
 	size_t body_whitelines;
 	int has_body;
-	struct dkim_signature signature;
+	struct signature signature;
 	int err;
 	EVP_MD_CTX *dctx;
 	struct osmtpd_ctx *ctx;
@@ -142,7 +142,7 @@ static const EVP_MD *hash_md;
 static int keyid = EVP_PKEY_RSA;
 static int sephash = 0;
 
-#define DKIM_SIGNATURE_LINELEN 78
+#define SIGNATURE_LINELEN 78
 
 /* RFC 8617 Section 4.2.1 */
 #define ARC_MIN_I 1
@@ -152,25 +152,25 @@ static int arc = 0;
 static int seal = 0;
 
 void usage(void);
-void dkim_adddomain(char *);
-void dkim_err(struct dkim_message *, char *);
-void dkim_errx(struct dkim_message *, char *);
-void dkim_headers_set(char *);
-void dkim_dataline(struct osmtpd_ctx *, const char *);
-void dkim_commit(struct osmtpd_ctx *);
-void *dkim_message_new(struct osmtpd_ctx *);
-void dkim_message_free(struct osmtpd_ctx *, void *);
-void dkim_parse_header(struct dkim_message *, char *, int);
-void dkim_parse_body(struct dkim_message *, char *);
+void sign_adddomain(char *);
+void sign_err(struct message *, char *);
+void sign_errx(struct message *, char *);
+void sign_headers_set(char *);
+void sign_dataline(struct osmtpd_ctx *, const char *);
+void sign_commit(struct osmtpd_ctx *);
+void *message_new(struct osmtpd_ctx *);
+void message_free(struct osmtpd_ctx *, void *);
+void sign_parse_header(struct message *, char *, int);
+void sign_parse_body(struct message *, char *);
 const char *ar_chain_status2str(enum ar_chain_status);
-void dkim_sign(struct osmtpd_ctx *);
-int dkim_signature_printheader(struct dkim_message *, const char *);
-int dkim_signature_printf(struct dkim_message *, char *, ...)
+void sign_sign(struct osmtpd_ctx *);
+int signature_printheader(struct message *, const char *);
+int signature_printf(struct message *, char *, ...)
 	__attribute__((__format__ (printf, 2, 3)));
-int dkim_signature_normalize(struct dkim_message *);
-const char *dkim_domain_select(struct dkim_message *, char *);
-int dkim_signature_need(struct dkim_message *, size_t);
-int dkim_sign_init(struct dkim_message *);
+int signature_normalize(struct message *);
+const char *sign_domain_select(struct message *, char *);
+int signature_need(struct message *, size_t);
+int sign_sign_init(struct message *);
 
 int
 main(int argc, char *argv[])
@@ -241,7 +241,7 @@ main(int argc, char *argv[])
 						line[linelen - 1] = '\0';
 					if (*line == '#' || *line == '\0')
 						continue;
-					dkim_adddomain(line);
+					sign_adddomain(line);
 				}
 			} while (linelen != -1);
 			if (ferror(file))
@@ -250,12 +250,12 @@ main(int argc, char *argv[])
 			fclose(file);
 			break;
 		case 'd':
-			dkim_adddomain(optarg);
+			sign_adddomain(optarg);
 			break;
 		case 'h':
 			if (seal)
 				osmtpd_errx(1, "ARC-Seal requires predefinded headers");
-			dkim_headers_set(optarg);
+			sign_headers_set(optarg);
 			break;
 		case 'k':
 			if ((file = fopen(optarg, "r")) == NULL)
@@ -312,16 +312,16 @@ main(int argc, char *argv[])
 	if (EVP_PKEY_id(pkey) != keyid)
 		osmtpd_errx(1, "Key is not of type %s", cryptalg);
 
-	osmtpd_register_filter_dataline(dkim_dataline);
-	osmtpd_register_filter_commit(dkim_commit);
-	osmtpd_local_message(dkim_message_new, dkim_message_free);
+	osmtpd_register_filter_dataline(sign_dataline);
+	osmtpd_register_filter_commit(sign_commit);
+	osmtpd_local_message(message_new, message_free);
 	osmtpd_run();
 
 	return 0;
 }
 
 void
-dkim_adddomain(char *d)
+sign_adddomain(char *d)
 {
 	domain = reallocarray(domain, ndomains + 1, sizeof(*domain));
 	if (domain == NULL)
@@ -331,9 +331,9 @@ dkim_adddomain(char *d)
 }
 
 void
-dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
+sign_dataline(struct osmtpd_ctx *ctx, const char *line)
 {
-	struct dkim_message *message = ctx->local_message;
+	struct message *message = ctx->local_message;
 	char *linedup;
 	size_t linelen;
 
@@ -345,20 +345,20 @@ dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
 
 	linelen = strlen(line);
 	if (fprintf(message->origf, "%s\n", line) < (int) linelen)
-		dkim_errx(message, "Couldn't write to tempfile");
+		sign_errx(message, "Couldn't write to tempfile");
 
 	if (line[0] == '.' && line[1] =='\0') {
-		dkim_sign(ctx);
+		sign_sign(ctx);
 	} else if (linelen !=  0 && message->parsing_headers) {
 		if (line[0] == '.')
 			line++;
 		if ((linedup = strdup(line)) == NULL)
 			osmtpd_err(1, "strdup");
-		dkim_parse_header(message, linedup, 0);
+		sign_parse_header(message, linedup, 0);
 		free(linedup);
 	} else if (linelen == 0 && message->parsing_headers) {
 		if (!arc && !seal && addheaders > 0 &&
-			!dkim_signature_printf(message, "; "))
+			!signature_printf(message, "; "))
 			return;
 		message->parsing_headers = 0;
 	} else if (!seal) {
@@ -366,15 +366,15 @@ dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
 			line++;
 		if ((linedup = strdup(line)) == NULL)
 			osmtpd_err(1, "strdup");
-		dkim_parse_body(message, linedup);
+		sign_parse_body(message, linedup);
 		free(linedup);
 	}
 }
 
 void
-dkim_commit(struct osmtpd_ctx *ctx)
+sign_commit(struct osmtpd_ctx *ctx)
 {
-	struct dkim_message *message = ctx->local_message;
+	struct message *message = ctx->local_message;
 
 	if (message->err)
 		osmtpd_filter_disconnect(ctx, "Internal server error");
@@ -383,9 +383,9 @@ dkim_commit(struct osmtpd_ctx *ctx)
 }
 
 void *
-dkim_message_new(struct osmtpd_ctx *ctx)
+message_new(struct osmtpd_ctx *ctx)
 {
-	struct dkim_message *message;
+	struct message *message;
 
 	if ((message = calloc(1, sizeof(*message))) == NULL) {
 		osmtpd_err(1, "Failed to create message context");
@@ -394,7 +394,7 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	message->ctx = ctx;
 
 	if ((message->origf = tmpfile()) == NULL) {
-		dkim_err(message, "Failed to open tempfile");
+		sign_err(message, "Failed to open tempfile");
 		goto fail;
 	}
 	message->parsing_headers = 1;
@@ -402,7 +402,7 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	message->body_whitelines = 0;
 	message->headers = calloc(1, sizeof(*(message->headers)));
 	if (message->headers == NULL) {
-		dkim_err(message, "Can't save headers");
+		sign_err(message, "Can't save headers");
 		goto fail;
 	}
 	message->lastheader = 0;
@@ -411,39 +411,39 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	message->signature.len = 0;
 	message->err = 0;
 
-	if (!arc && !seal && !dkim_signature_printf(message,
+	if (!arc && !seal && !signature_printf(message,
 	    "DKIM-Signature: v=%s; a=%s-%s; c=%s/%s; s=%s; ", "1",
 	    cryptalg, hashalg,
 	    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
 	    canonbody == CANON_SIMPLE ? "simple" : "relaxed", selector))
 		goto fail;
-	if (seal && !dkim_signature_printf(message, "ARC-Seal: "))
+	if (seal && !signature_printf(message, "ARC-Seal: "))
 		goto fail;
 	if (arc &&
-		!dkim_signature_printf(message, "ARC-Message-Signature: "))
+		!signature_printf(message, "ARC-Message-Signature: "))
 		goto fail;
 	if (!arc && !seal && addheaders > 0 &&
-		!dkim_signature_printf(message, "z="))
+		!signature_printf(message, "z="))
 		goto fail;
 
 	if ((message->dctx = EVP_MD_CTX_new()) == NULL) {
-		dkim_errx(message, "Failed to create hash context");
+		sign_errx(message, "Failed to create hash context");
 		goto fail;
 	}
 	if (EVP_DigestInit_ex(message->dctx, hash_md, NULL) <= 0) {
-		dkim_errx(message, "Failed to initialize hash context");
+		sign_errx(message, "Failed to initialize hash context");
 		goto fail;
 	}
 	return message;
 fail:
-	dkim_message_free(ctx, message);
+	message_free(ctx, message);
 	return NULL;
 }
 
 void
-dkim_message_free(struct osmtpd_ctx *ctx, void *data)
+message_free(struct osmtpd_ctx *ctx, void *data)
 {
-	struct dkim_message *message = data;
+	struct message *message = data;
 	size_t i;
 
 	fclose(message->origf);
@@ -457,7 +457,7 @@ dkim_message_free(struct osmtpd_ctx *ctx, void *data)
 }
 
 void
-dkim_headers_set(char *headers)
+sign_headers_set(char *headers)
 {
 	size_t i;
 	int has_from = 0;
@@ -497,7 +497,7 @@ dkim_headers_set(char *headers)
 }
 
 void
-dkim_err(struct dkim_message *message, char *msg)
+sign_err(struct message *message, char *msg)
 {
 	message->err = 1;
 	fprintf(stderr, "%016"PRIx64" %s: %s\n",
@@ -505,7 +505,7 @@ dkim_err(struct dkim_message *message, char *msg)
 }
 
 void
-dkim_errx(struct dkim_message *message, char *msg)
+sign_errx(struct message *message, char *msg)
 {
 	message->err = 1;
 	fprintf(stderr, "%016"PRIx64" %s\n",
@@ -513,7 +513,7 @@ dkim_errx(struct dkim_message *message, char *msg)
 }
 
 void
-dkim_parse_header(struct dkim_message *message, char *line, int force)
+sign_parse_header(struct message *message, char *line, int force)
 {
 	long li;
 	size_t i;
@@ -527,7 +527,7 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 	char *tmp;
 
 	if (!arc && !seal && addheaders == 2 && !force &&
-	    !dkim_signature_printheader(message, line))
+	    !signature_printheader(message, line))
 		return;
 
 	if ((line[0] == ' ' || line[0] == '\t')) {
@@ -538,12 +538,12 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 			linelen += strlen(message->arc_ar);
 			htmp = reallocarray(message->arc_ar, linelen, sizeof(*htmp));
 			if (htmp == NULL) {
-				dkim_err(message, "Can't store header");
+				sign_err(message, "Can't store header");
 				return;
 			}
 			message->arc_ar = htmp;
 			if (strlcat(htmp, line, linelen) >= linelen) {
-				dkim_errx(message, "Missized header");
+				sign_errx(message, "Missized header");
 				return;
 			}
 		}
@@ -627,7 +627,7 @@ skpi_arc_ar:
 				hlen++;
 			message->arc_i = -1;
 			if ((message->arc_ar = strdup(line + hlen)) == NULL) {
-				dkim_err(message, "Can't store header");
+				sign_err(message, "Can't store header");
 				return;
 			}
 		}
@@ -646,7 +646,7 @@ skpi_arc_ar:
 	}
 
 	if (!arc && !seal && addheaders == 1 && !force &&
-	    !dkim_signature_printheader(message, line))
+	    !signature_printheader(message, line))
 		return;
 
 	if (canonheader == CANON_RELAXED) {
@@ -687,13 +687,13 @@ skpi_arc_ar:
 		mtmp = recallocarray(message->headers, lastheader + 1,
 		    lastheader + 2, sizeof(*mtmp));
 		if (mtmp == NULL) {
-			dkim_err(message, "Can't store header");
+			sign_err(message, "Can't store header");
 			return;
 		}
 		message->headers = mtmp;
 
 		if ((message->headers[lastheader] = strdup(line)) == NULL) {
-			dkim_err(message, "Can't store header");
+			sign_err(message, "Can't store header");
 			return;
 		}
 		message->headers[lastheader + 1 ] = NULL;
@@ -707,7 +707,7 @@ skpi_arc_ar:
 		htmp = reallocarray(message->headers[lastheader], linelen,
 		    sizeof(*htmp));
 		if (htmp == NULL) {
-			dkim_err(message, "Can't store header");
+			sign_err(message, "Can't store header");
 			return;
 		}
 		message->headers[lastheader] = htmp;
@@ -725,7 +725,7 @@ skpi_arc_ar:
 }
 
 void
-dkim_parse_body(struct dkim_message *message, char *line)
+sign_parse_body(struct message *message, char *line)
 {
 	size_t r, w;
 	size_t linelen;
@@ -752,7 +752,7 @@ dkim_parse_body(struct dkim_message *message, char *line)
 
 	while (message->body_whitelines--) {
 		if (EVP_DigestUpdate(message->dctx, "\r\n", 2) == 0) {
-			dkim_errx(message, "Can't update hash context");
+			sign_errx(message, "Can't update hash context");
 			return;
 		}
 	}
@@ -761,7 +761,7 @@ dkim_parse_body(struct dkim_message *message, char *line)
 
 	if (EVP_DigestUpdate(message->dctx, line, linelen) == 0 ||
 	    EVP_DigestUpdate(message->dctx, "\r\n", 2) == 0) {
-		dkim_errx(message, "Can't update hash context");
+		sign_errx(message, "Can't update hash context");
 		return;
 	}
 }
@@ -783,9 +783,9 @@ ar_chain_status2str(enum ar_chain_status status)
 }
 
 void
-dkim_sign(struct osmtpd_ctx *ctx)
+sign_sign(struct osmtpd_ctx *ctx)
 {
-	struct dkim_message *message = ctx->local_message;
+	struct message *message = ctx->local_message;
 	/* Use largest hash size here */
 	unsigned char bdigest[EVP_MAX_MD_SIZE];
 	unsigned char digest[(((sizeof(bdigest) + 2) / 3) * 4) + 1];
@@ -798,31 +798,31 @@ dkim_sign(struct osmtpd_ctx *ctx)
 	unsigned int digestsz;
 
 	if ((arc || seal) && message->arc_i < ARC_MIN_I) {
-		dkim_errx(message, "Can't parse ACR-AR header");
+		sign_errx(message, "Can't parse ACR-AR header");
 		goto fail;
 	}
 
-	if ((arc || seal) && !dkim_signature_printf(message,
+	if ((arc || seal) && !signature_printf(message,
 		"i=%d; a=%s-%s; s=%s; ",
 		message->arc_i, cryptalg, hashalg, selector))
 		goto fail;
 
-	if (arc && !dkim_signature_printf(message, "c=%s/%s; ",
+	if (arc && !signature_printf(message, "c=%s/%s; ",
 	    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
 	    canonbody == CANON_SIMPLE ? "simple" : "relaxed"))
 		goto fail;
 
-	if (seal && !dkim_signature_printf(message, "cv=%s; ",
+	if (seal && !signature_printf(message, "cv=%s; ",
 		ar_chain_status2str(message->arc_cv)))
 		goto fail;
 
 	if (addtime || addexpire)
 		now = time(NULL);
-	if (addtime && !dkim_signature_printf(message, "t=%lld; ",
+	if (addtime && !signature_printf(message, "t=%lld; ",
 	    (long long)now))
 		goto fail;
 	if (!seal && addexpire != 0 &&
-		!dkim_signature_printf(message, "x=%lld; ",
+		!signature_printf(message, "x=%lld; ",
 	    now + addexpire < now ? INT64_MAX : now + addexpire))
 		goto fail;
 
@@ -831,16 +831,16 @@ dkim_sign(struct osmtpd_ctx *ctx)
 
 	if (canonbody == CANON_SIMPLE && !message->has_body) {
 		if (EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0) {
-			dkim_errx(message, "Can't update hash context");
+			sign_errx(message, "Can't update hash context");
 			goto fail;
 		}
 	}
 	if (EVP_DigestFinal_ex(message->dctx, bdigest, &digestsz) == 0) {
-		dkim_errx(message, "Can't finalize hash context");
+		sign_errx(message, "Can't finalize hash context");
 		goto fail;
 	}
 	EVP_EncodeBlock(digest, bdigest, digestsz);
-	if (!dkim_signature_printf(message, "bh=%s; h=", digest))
+	if (!signature_printf(message, "bh=%s; h=", digest))
 		goto fail;
 
 skip_seal:
@@ -851,13 +851,13 @@ skip_seal:
 	if (!sephash) {
 		if (EVP_DigestSignInit(message->dctx, NULL, hash_md, NULL,
 		    pkey) != 1) {
-			dkim_errx(message, "Failed to initialize signature "
+			sign_errx(message, "Failed to initialize signature "
 			    "context");
 			goto fail;
 		}
 	} else {
 		if (EVP_DigestInit_ex(message->dctx, hash_md, NULL) != 1) {
-			dkim_errx(message, "Failed to initialize hash context");
+			sign_errx(message, "Failed to initialize hash context");
 			goto fail;
 		}
 	}
@@ -868,7 +868,7 @@ skip_seal:
 			    strlen(message->headers[i])) != 1 ||
 			    EVP_DigestSignUpdate(message->dctx, "\r\n",
 			    2) <= 0) {
-				dkim_errx(message, "Failed to update signature "
+				sign_errx(message, "Failed to update signature "
 				    "context");
 				goto fail;
 			}
@@ -876,12 +876,12 @@ skip_seal:
 			if (EVP_DigestUpdate(message->dctx, message->headers[i],
 			    strlen(message->headers[i])) != 1 ||
 			    EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0) {
-				dkim_errx(message, "Failed to update digest "
+				sign_errx(message, "Failed to update digest "
 				    "context");
 				goto fail;
 			}
 		}
-		if ((tsdomain = dkim_domain_select(message, message->headers[i])) != NULL)
+		if ((tsdomain = sign_domain_select(message, message->headers[i])) != NULL)
 			sdomain = tsdomain;
 		/* We're done with the cached header after hashing */
 		for (tmp = message->headers[i]; tmp[0] != ':'; tmp++) {
@@ -890,89 +890,89 @@ skip_seal:
 			tmp[0] = tolower(tmp[0]);
 		}
 		tmp[0] = '\0';
-		if (!seal && !dkim_signature_printf(message, "%s%s",
+		if (!seal && !signature_printf(message, "%s%s",
 		    message->headers[i + 1] == NULL  ? "" : ":",
 		    message->headers[i]))
 			goto fail;
 	}
-	if (!seal && !dkim_signature_printf(message, "; d=%s; b=", sdomain))
+	if (!seal && !signature_printf(message, "; d=%s; b=", sdomain))
 		goto fail;
-	if (seal && !dkim_signature_printf(message, "d=%s; b=", sdomain))
+	if (seal && !signature_printf(message, "d=%s; b=", sdomain))
 		goto fail;
-	if (!dkim_signature_normalize(message))
+	if (!signature_normalize(message))
 		goto fail;
 	if ((tmp = strdup(message->signature.signature)) == NULL) {
-		dkim_err(message, "Can't create DKIM signature");
+		sign_err(message, "Can't create signature");
 		goto fail;
 	}
-	dkim_parse_header(message, tmp, 1);
+	sign_parse_header(message, tmp, 1);
 	if (!sephash) {
 		if (EVP_DigestSignUpdate(message->dctx, tmp,
 		    strlen(tmp)) != 1) {
-			dkim_errx(message, "Failed to update signature "
+			sign_errx(message, "Failed to update signature "
 			    "context");
 			goto fail;
 		}
 	} else {
 		if (EVP_DigestUpdate(message->dctx, tmp, strlen(tmp)) != 1) {
-			dkim_errx(message, "Failed to update digest context");
+			sign_errx(message, "Failed to update digest context");
 			goto fail;
 		}
 	}
 	free(tmp);
 	if (!sephash) {
 		if (EVP_DigestSignFinal(message->dctx, NULL, &linelen) != 1) {
-			dkim_errx(message, "Can't finalize signature context");
+			sign_errx(message, "Can't finalize signature context");
 			goto fail;
 		}
 #ifdef HAVE_ED25519
 	} else {
 		if (EVP_DigestFinal_ex(message->dctx, bdigest,
 		    &digestsz) != 1) {
-			dkim_errx(message, "Can't finalize hash context");
+			sign_errx(message, "Can't finalize hash context");
 			goto fail;
 		}
 		EVP_MD_CTX_reset(message->dctx);
 		if (EVP_DigestSignInit(message->dctx, NULL, NULL, NULL,
 		    pkey) != 1) {
-			dkim_errx(message, "Failed to initialize signature "
+			sign_errx(message, "Failed to initialize signature "
 			    "context");
 			goto fail;
 		}
 		if (EVP_DigestSign(message->dctx, NULL, &linelen, bdigest,
 		    digestsz) != 1) {
-			dkim_errx(message, "Failed to finalize signature");
+			sign_errx(message, "Failed to finalize signature");
 			goto fail;
 		}
 #endif
 	}
 	if ((tmp = malloc(linelen)) == NULL) {
-		dkim_err(message, "Can't allocate space for signature");
+		sign_err(message, "Can't allocate space for signature");
 		goto fail;
 	}
 	if (!sephash) {
 		if (EVP_DigestSignFinal(message->dctx, tmp, &linelen) != 1) {
-			dkim_errx(message, "Failed to finalize signature");
+			sign_errx(message, "Failed to finalize signature");
 			goto fail;
 		}
 #ifdef HAVE_ED25519
 	} else {
 		if (EVP_DigestSign(message->dctx, tmp, &linelen, bdigest,
 		    digestsz) != 1) {
-			dkim_errx(message, "Failed to finalize signature");
+			sign_errx(message, "Failed to finalize signature");
 			goto fail;
 		}
 #endif
 	}
 	if ((b = malloc((((linelen + 2) / 3) * 4) + 1)) == NULL) {
-		dkim_err(message, "Can't create DKIM signature");
+		sign_err(message, "Can't create signature");
 		goto fail;
 	}
 	EVP_EncodeBlock(b, tmp, linelen);
 	free(tmp);
-	dkim_signature_printf(message, "%s\r\n", b);
+	signature_printf(message, "%s\r\n", b);
 	free(b);
-	dkim_signature_normalize(message);
+	signature_normalize(message);
 	tmp = message->signature.signature;
 	while ((tmp2 = strchr(tmp, '\r')) != NULL) {
 		tmp2[0] = '\0';
@@ -993,7 +993,7 @@ fail:
 }
 
 int
-dkim_signature_normalize(struct dkim_message *message)
+signature_normalize(struct message *message)
 {
 	size_t i;
 	size_t linelen;
@@ -1022,13 +1022,13 @@ dkim_signature_normalize(struct dkim_message *message)
 			}
 			continue;
 		}
-		if (linelen > DKIM_SIGNATURE_LINELEN && checkpoint != 0) {
+		if (linelen > SIGNATURE_LINELEN && checkpoint != 0) {
 			for (skip = checkpoint + 1;
 			    sig[skip] == ' ' || sig[skip] == '\t';
 			    skip++)
 				continue;
 			skip -= checkpoint + 1;
-			if (!dkim_signature_need(message,
+			if (!signature_need(message,
 			    skip > 3 ? 0 : 3 - skip + 1))
 				return 0;
 			sig = message->signature.signature;
@@ -1074,7 +1074,7 @@ dkim_signature_normalize(struct dkim_message *message)
 }
 
 int
-dkim_signature_printheader(struct dkim_message *message, const char *header)
+signature_printheader(struct message *message, const char *header)
 {
 	size_t i, j, len;
 	static char *fmtheader = NULL;
@@ -1085,12 +1085,12 @@ dkim_signature_printheader(struct dkim_message *message, const char *header)
 	len = strlen(header);
 	if ((len + 3) * 3 < len) {
 		errno = EOVERFLOW;
-		dkim_err(message, "Can't add z-component to header");
+		sign_err(message, "Can't add z-component to header");
 		return 0;
 	}
 	if ((len + 3) * 3 > size) {
 		if ((tmp = reallocarray(fmtheader, 3, len + 3)) == NULL) {
-			dkim_err(message, "Can't add z-component to header");
+			sign_err(message, "Can't add z-component to header");
 			return 0;
 		}
 		fmtheader = tmp;
@@ -1115,13 +1115,13 @@ dkim_signature_printheader(struct dkim_message *message, const char *header)
 	(void) sprintf(fmtheader + j, "=%02hhX=%02hhX", (unsigned char) '\r',
 	    (unsigned char) '\n');
 
-	return dkim_signature_printf(message, "%s", fmtheader);
+	return signature_printf(message, "%s", fmtheader);
 }
 
 int
-dkim_signature_printf(struct dkim_message *message, char *fmt, ...)
+signature_printf(struct message *message, char *fmt, ...)
 {
-	struct dkim_signature *sig = &(message->signature);
+	struct signature *sig = &(message->signature);
 	va_list ap;
 	size_t len;
 
@@ -1129,7 +1129,7 @@ dkim_signature_printf(struct dkim_message *message, char *fmt, ...)
 	if ((len = vsnprintf(sig->signature + sig->len, sig->size - sig->len,
 	    fmt, ap)) >= sig->size - sig->len) {
 		va_end(ap);
-		if (!dkim_signature_need(message, len + 1))
+		if (!signature_need(message, len + 1))
 			return 0;
 		va_start(ap, fmt);
 		if ((len = vsnprintf(sig->signature + sig->len,
@@ -1142,14 +1142,14 @@ dkim_signature_printf(struct dkim_message *message, char *fmt, ...)
 }
 
 const char *
-dkim_domain_select(struct dkim_message *message, char *from)
+sign_domain_select(struct message *message, char *from)
 {
 	char *mdomain0, *mdomain;
 	size_t i;
 
 	if ((mdomain = mdomain0 = osmtpd_mheader_from_domain(from)) == NULL) {
 		if (errno != EINVAL) {
-			dkim_errx(message, "Couldn't parse from header");
+			sign_errx(message, "Couldn't parse from header");
 			return NULL;
 		}
 		return NULL;
@@ -1170,16 +1170,16 @@ dkim_domain_select(struct dkim_message *message, char *from)
 }
 
 int
-dkim_signature_need(struct dkim_message *message, size_t len)
+signature_need(struct message *message, size_t len)
 {
-	struct dkim_signature *sig = &(message->signature);
+	struct signature *sig = &(message->signature);
 	char *tmp;
 
 	if (sig->len + len < sig->size)
 		return 1;
 	sig->size = (((len + sig->len) / 512) + 1) * 512;
 	if ((tmp = realloc(sig->signature, sig->size)) == NULL) {
-		dkim_err(message, "No room for signature");
+		sign_err(message, "No room for signature");
 		return 0;
 	}
 	sig->signature = tmp;
@@ -1189,7 +1189,7 @@ dkim_signature_need(struct dkim_message *message, size_t len)
 __dead void
 usage(void)
 {
-	fprintf(stderr, "usage: filter-dkimsign [-tz] [-A] [-S] [-a signalg] "
+	fprintf(stderr, "usage: filter-sign [-tz] [-A] [-S] [-a signalg] "
 	    "[-c canonicalization] \n    [-h headerfields]"
 	    "[-x seconds] -D file -d domain -k keyfile -s selector\n");
 	exit(1);
