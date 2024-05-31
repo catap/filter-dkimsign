@@ -22,6 +22,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,6 +61,7 @@ struct dkim_message {
 	struct dkim_signature signature;
 	int err;
 	EVP_MD_CTX *dctx;
+	struct osmtpd_ctx *ctx;
 };
 
 /* RFC 6376 section 5.4.1 */
@@ -358,9 +360,10 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	struct dkim_message *message;
 
 	if ((message = calloc(1, sizeof(*message))) == NULL) {
-		dkim_err(message, "Failed to create message context");
+		osmtpd_err(1, "Failed to create message context");
 		return NULL;
 	}
+	message->ctx = ctx;
 
 	if ((message->origf = tmpfile()) == NULL) {
 		dkim_err(message, "Failed to open tempfile");
@@ -469,14 +472,16 @@ void
 dkim_err(struct dkim_message *message, char *msg)
 {
 	message->err = 1;
-	fprintf(stderr, "%s: %s\n", msg, strerror(errno));
+	fprintf(stderr, "%016"PRIx64" %s: %s\n",
+		message->ctx->reqid, msg, strerror(errno));
 }
 
 void
 dkim_errx(struct dkim_message *message, char *msg)
 {
 	message->err = 1;
-	fprintf(stderr, "%s\n", msg);
+	fprintf(stderr, "%016"PRIx64" %s\n",
+		message->ctx->reqid, msg);
 }
 
 void
