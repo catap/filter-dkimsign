@@ -65,26 +65,50 @@ struct dkim_message {
 };
 
 /* RFC 6376 section 5.4.1 */
-static char *dsign_headers[] = {
-	"from",
-	"reply-to",
-	"subject",
-	"date",
-	"to",
-	"cc",
-	"resent-date",
-	"resent-from",
-	"resent-to",
-	"resent-cc",
-	"in-reply-to",
-	"references",
-	"list-id",
-	"list-help",
-	"list-unsubscribe",
-	"list-subscribe",
-	"list-post",
-	"list-owner",
-	"list-archive"
+static char *dkim_headers[] = {
+	"From",
+	"Reply-To",
+	"Subject",
+	"Date",
+	"To",
+	"Cc",
+	"Resent-Date",
+	"Resent-From",
+	"Resent-To",
+	"Resent-Cc",
+	"In-Reply-To",
+	"References",
+	"List-Id",
+	"List-Help",
+	"List-Unsubscribe",
+	"List-Subscribe",
+	"List-Post",
+	"List-Owner",
+	"List-rchive"
+};
+
+/* RFC 6376 section 5.4.1 + RFC8617 Section 4.1.2 */
+static char *arc_sign_headers[] = {
+	"From",
+	"Reply-To",
+	"Subject",
+	"Date",
+	"To",
+	"Cc",
+	"Resent-Date",
+	"Resent-From",
+	"Resent-To",
+	"Resent-Cc",
+	"In-Reply-To",
+	"References",
+	"List-Id",
+	"List-Help",
+	"List-Unsubscribe",
+	"List-Subscribe",
+	"List-Post",
+	"List-Owner",
+	"List-rchive",
+	"DKIM-Signature"
 };
 
 /* RFC8617 Section 5.1.1 */
@@ -94,8 +118,8 @@ static char *arc_seal_headers[] = {
 	"ARC-Seal"
 };
 
-static char **sign_headers = dsign_headers;
-static size_t nsign_headers = sizeof(dsign_headers) / sizeof(*dsign_headers);
+static char **sign_headers = dkim_headers;
+static size_t nsign_headers = sizeof(dkim_headers) / sizeof(*dkim_headers);
 
 static char *hashalg = "sha256";
 static char *cryptalg = "rsa";
@@ -162,6 +186,9 @@ main(int argc, char *argv[])
 		switch (ch) {
 		case 'A':
 			arc = 1;
+			sign_headers = arc_sign_headers;
+			nsign_headers =
+				sizeof(arc_sign_headers) / sizeof(*arc_sign_headers);
 			break;
 		case 'a':
 			if (strncmp(optarg, "rsa-", 4) == 0) {
@@ -243,7 +270,8 @@ main(int argc, char *argv[])
 			seal = 1;
 			canonheader = CANON_RELAXED;
 			sign_headers = arc_seal_headers;
-			nsign_headers = sizeof(arc_seal_headers) / sizeof(*arc_seal_headers);
+			nsign_headers =
+				sizeof(arc_seal_headers) / sizeof(*arc_seal_headers);
 			break;
 		case 's':
 			selector = optarg;
