@@ -15,10 +15,10 @@
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
 .Dd $Mdocdate$
-.Dt FILTER-DKIMSIGN 8
+.Dt FILTER-SIGN 8
 .Os
 .Sh NAME
-.Nm filter-dkimsign
+.Nm filter-sign
 .Nd add DKIM or ARC signature to messages
 .Sh SYNOPSIS
 .Nm
@@ -105,16 +105,16 @@ The selector within the _domainkey subdomain of
 .Ar domain
 where the public key can be found.
 .It Fl t
-Add the time of signing to the dkim header.
+Add the time of signing to the header.
 .It Fl x Ar seconds
 Add the amount of
 .Ar seconds
-the signature is valid to the dkim header.
+the signature is valid to the header.
 .It Fl z
-Add the mail headers used in the dkim signature to the dkim header.
+Add the mail headers used in the signature to the header.
 If a second
 .Fl z
-is specified all headers will be included in the dkim header.
+is specified all headers will be included in the header.
 Useful for debugging purposes.
 .El
 .Sh SEE ALSO
@@ -160,4 +160,5 @@ Useful for debugging purposes.
 .%T The Authenticated Received Chain (ARC) Protocol
 .Re
 .Sh AUTHORS
+.An Kirill A. Korinsky Aq Mt kirill@korins.ky
 .An Martijn van Duren Aq Mt martijn@openbsd.org
