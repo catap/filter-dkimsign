@@ -1,7 +1,7 @@
 LOCALBASE?=	/usr/
 
-PROG=		filter-dkimsign
-MAN=		filter-dkimsign.8
+PROG=		filter-sign
+MAN=		filter-sign.8
 BINDIR=		${LOCALBASE}/libexec/opensmtpd/
 MANDIR=		${LOCALBASE}/share/man/man8
 
