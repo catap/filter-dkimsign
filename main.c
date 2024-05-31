@@ -122,7 +122,7 @@ static int sephash = 0;
 #define ARC_MIN_I 1
 #define ARC_MAX_I 50
 
-static int dkim = 1;
+static int arc = 0;
 static int seal = 0;
 
 void usage(void);
@@ -159,7 +159,7 @@ main(int argc, char *argv[])
 	while ((ch = getopt(argc, argv, "Aa:c:D:d:h:k:Ss:tx:z")) != -1) {
 		switch (ch) {
 		case 'A':
-			dkim = 0;
+			arc = 1;
 			break;
 		case 'a':
 			if (strncmp(optarg, "rsa-", 4) == 0) {
@@ -238,7 +238,6 @@ main(int argc, char *argv[])
 			fclose(file);
 			break;
 		case 'S':
-			dkim = 0;
 			seal = 1;
 			canonheader = CANON_RELAXED;
 			sign_headers = arc_seal_headers;
@@ -263,8 +262,8 @@ main(int argc, char *argv[])
 		}
 	}
 
-	if (dkim && seal)
-		osmtpd_errx(1, "Can't make DKIM and ARC-Seal at the same time");
+	if (arc && seal)
+		osmtpd_errx(1, "Can't make ARC signature and seal at the same time");
 
 	if (seal && canonheader != CANON_RELAXED)
 		osmtpd_errx(1, "ARC-Seal requires relaxed canonicalization");
@@ -328,7 +327,7 @@ dkim_dataline(struct osmtpd_ctx *ctx, const char *line)
 		dkim_parse_header(message, linedup, 0);
 		free(linedup);
 	} else if (linelen == 0 && message->parsing_headers) {
-		if (dkim && addheaders > 0 &&
+		if (!arc && !seal && addheaders > 0 &&
 			!dkim_signature_printf(message, "; "))
 			return;
 		message->parsing_headers = 0;
@@ -381,7 +380,7 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 	message->signature.len = 0;
 	message->err = 0;
 
-	if (dkim && !dkim_signature_printf(message,
+	if (!arc && !seal && !dkim_signature_printf(message,
 	    "DKIM-Signature: v=%s; a=%s-%s; c=%s/%s; s=%s; ", "1",
 	    cryptalg, hashalg,
 	    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
@@ -389,10 +388,10 @@ dkim_message_new(struct osmtpd_ctx *ctx)
 		goto fail;
 	if (seal && !dkim_signature_printf(message, "ARC-Seal: "))
 		goto fail;
-	if (!dkim && !seal &&
+	if (arc &&
 		!dkim_signature_printf(message, "ARC-Message-Signature: "))
 		goto fail;
-	if (dkim && addheaders > 0 &&
+	if (!arc && !seal && addheaders > 0 &&
 		!dkim_signature_printf(message, "z="))
 		goto fail;
 
@@ -494,13 +493,13 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 	char *htmp;
 	char *tmp;
 
-	if (dkim && addheaders == 2 && !force &&
+	if (!arc && !seal && addheaders == 2 && !force &&
 	    !dkim_signature_printheader(message, line))
 		return;
 
 	if ((line[0] == ' ' || line[0] == '\t')) {
 		/* concat ARC-AR header */
-		if (!dkim && message->arc_i == -1) {
+		if (message->arc_i == -1) {
 			linelen = 1;
 			linelen += strlen(line);
 			linelen += strlen(message->arc_ar);
@@ -521,7 +520,7 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 	if ((line[0] != ' ' && line[0] != '\t')) {
 		message->lastheader = 0;
 		/* The next header, parse captured ARC-AR */
-		if (!dkim && message->arc_i == -1) {
+		if (message->arc_i == -1) {
 			message->arc_i = -2;
 			hlen = 0;
 			if (message->arc_ar[hlen] != 'i')
@@ -588,7 +587,7 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 skpi_arc_ar:
 		/* Capture the first ARC-AR header */
 		hlen = sizeof("ARC-Authentication-Results:") - 1;
-		if (!dkim && message->arc_ar == NULL &&
+		if ((arc || seal) && message->arc_ar == NULL &&
 			strncasecmp("ARC-Authentication-Results:", line, hlen) == 0) {
 			while (line[hlen] == ' ' || line[hlen] == '\t')
 				hlen++;
@@ -612,7 +611,7 @@ skpi_arc_ar:
 			return;
 	}
 
-	if (dkim && addheaders == 1 && !force &&
+	if (!arc && !seal && addheaders == 1 && !force &&
 	    !dkim_signature_printheader(message, line))
 		return;
 
@@ -764,17 +763,17 @@ dkim_sign(struct osmtpd_ctx *ctx)
 	char *tmp, *tmp2;
 	unsigned int digestsz;
 
-	if (!dkim && message->arc_i < ARC_MIN_I) {
+	if ((arc || seal) && message->arc_i < ARC_MIN_I) {
 		dkim_errx(message, "Can't parse ACR-AR header");
 		goto fail;
 	}
 
-	if (!dkim && !dkim_signature_printf(message,
+	if ((arc || seal) && !dkim_signature_printf(message,
 		"i=%d; a=%s-%s; s=%s; ",
 		message->arc_i, cryptalg, hashalg, selector))
 		goto fail;
 
-	if (!dkim && !seal && !dkim_signature_printf(message, "c=%s/%s; ",
+	if (arc && !dkim_signature_printf(message, "c=%s/%s; ",
 	    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
 	    canonbody == CANON_SIMPLE ? "simple" : "relaxed"))
 		goto fail;
