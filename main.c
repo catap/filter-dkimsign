@@ -600,7 +600,8 @@ dkim_parse_header(struct dkim_message *message, char *line, int force)
 				while (message->arc_ar[hlen] == ' ' ||
 					   message->arc_ar[hlen] == '\t')
 					hlen++;
-				if (!strncasecmp("none", message->arc_ar + hlen, 4)) {
+				if (message->arc_i == ARC_MIN_I &&
+					!strncasecmp("none", message->arc_ar + hlen, 4)) {
 					hlen += 4;
 					message->arc_cv = AR_NONE;
 				}
