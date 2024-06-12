@@ -153,8 +153,6 @@ static int seal = 0;
 
 void usage(void);
 void sign_adddomain(char *);
-void sign_err(struct message *, char *);
-void sign_errx(struct message *, char *);
 void sign_headers_set(char *);
 void sign_dataline(struct osmtpd_ctx *, const char *);
 void sign_commit(struct osmtpd_ctx *);
@@ -345,7 +343,7 @@ sign_dataline(struct osmtpd_ctx *ctx, const char *line)
 
 	linelen = strlen(line);
 	if (fprintf(message->origf, "%s\n", line) < (int) linelen)
-		sign_errx(message, "Couldn't write to tempfile");
+		osmtpd_errx(1, "Couldn't write to tempfile");
 
 	if (line[0] == '.' && line[1] =='\0') {
 		sign_sign(ctx);
@@ -393,18 +391,14 @@ message_new(struct osmtpd_ctx *ctx)
 	}
 	message->ctx = ctx;
 
-	if ((message->origf = tmpfile()) == NULL) {
-		sign_err(message, "Failed to open tempfile");
-		goto fail;
-	}
+	if ((message->origf = tmpfile()) == NULL)
+		osmtpd_err(1, "Failed to open tempfile");
 	message->parsing_headers = 1;
 
 	message->body_whitelines = 0;
 	message->headers = calloc(1, sizeof(*(message->headers)));
-	if (message->headers == NULL) {
-		sign_err(message, "Can't save headers");
-		goto fail;
-	}
+	if (message->headers == NULL)
+		osmtpd_err(1, "malloc");
 	message->lastheader = 0;
 	message->signature.signature = NULL;
 	message->signature.size = 0;
@@ -426,14 +420,11 @@ message_new(struct osmtpd_ctx *ctx)
 		!signature_printf(message, "z="))
 		goto fail;
 
-	if ((message->dctx = EVP_MD_CTX_new()) == NULL) {
-		sign_errx(message, "Failed to create hash context");
-		goto fail;
-	}
-	if (EVP_DigestInit_ex(message->dctx, hash_md, NULL) <= 0) {
-		sign_errx(message, "Failed to initialize hash context");
-		goto fail;
-	}
+	if ((message->dctx = EVP_MD_CTX_new()) == NULL)
+		osmtpd_errx(1, "EVP_MD_CTX_new");
+	if (EVP_DigestInit_ex(message->dctx, hash_md, NULL) <= 0)
+		osmtpd_errx(1, "EVP_DigestInit_ex");
+
 	return message;
 fail:
 	message_free(ctx, message);
@@ -497,22 +488,6 @@ sign_headers_set(char *headers)
 }
 
 void
-sign_err(struct message *message, char *msg)
-{
-	message->err = 1;
-	fprintf(stderr, "%016"PRIx64" %s: %s\n",
-		message->ctx->reqid, msg, strerror(errno));
-}
-
-void
-sign_errx(struct message *message, char *msg)
-{
-	message->err = 1;
-	fprintf(stderr, "%016"PRIx64" %s\n",
-		message->ctx->reqid, msg);
-}
-
-void
 sign_parse_header(struct message *message, char *line, int force)
 {
 	long li;
@@ -537,15 +512,11 @@ sign_parse_header(struct message *message, char *line, int force)
 			linelen += strlen(line);
 			linelen += strlen(message->arc_ar);
 			htmp = reallocarray(message->arc_ar, linelen, sizeof(*htmp));
-			if (htmp == NULL) {
-				sign_err(message, "Can't store header");
-				return;
-			}
+			if (htmp == NULL)
+				osmtpd_err(1, "malloc");
 			message->arc_ar = htmp;
-			if (strlcat(htmp, line, linelen) >= linelen) {
-				sign_errx(message, "Missized header");
-				return;
-			}
+			if (strlcat(htmp, line, linelen) >= linelen)
+				osmtpd_errx(1, "Missized header");
 		}
 		if (!message->lastheader)
 			return;
@@ -626,10 +597,8 @@ skpi_arc_ar:
 			while (line[hlen] == ' ' || line[hlen] == '\t')
 				hlen++;
 			message->arc_i = -1;
-			if ((message->arc_ar = strdup(line + hlen)) == NULL) {
-				sign_err(message, "Can't store header");
-				return;
-			}
+			if ((message->arc_ar = strdup(line + hlen)) == NULL)
+				osmtpd_err(1, "malloc");
 		}
 		for (i = 0; i < nsign_headers; i++) {
 			hlen = strlen(sign_headers[i]);
@@ -686,16 +655,12 @@ skpi_arc_ar:
 	if (!message->lastheader) {
 		mtmp = recallocarray(message->headers, lastheader + 1,
 		    lastheader + 2, sizeof(*mtmp));
-		if (mtmp == NULL) {
-			sign_err(message, "Can't store header");
-			return;
-		}
+		if (mtmp == NULL)
+			osmtpd_err(1, "malloc");
 		message->headers = mtmp;
 
-		if ((message->headers[lastheader] = strdup(line)) == NULL) {
-			sign_err(message, "Can't store header");
-			return;
-		}
+		if ((message->headers[lastheader] = strdup(line)) == NULL)
+			osmtpd_err(1, "malloc");
 		message->headers[lastheader + 1 ] = NULL;
 		message->lastheader = 1;
 	} else {
@@ -706,10 +671,8 @@ skpi_arc_ar:
 		linelen++;
 		htmp = reallocarray(message->headers[lastheader], linelen,
 		    sizeof(*htmp));
-		if (htmp == NULL) {
-			sign_err(message, "Can't store header");
-			return;
-		}
+		if (htmp == NULL)
+			osmtpd_err(1, "malloc");
 		message->headers[lastheader] = htmp;
 		if (canonheader == CANON_SIMPLE) {
 			if (strlcat(htmp, "\r\n", linelen) >= linelen)
@@ -751,19 +714,15 @@ sign_parse_body(struct message *message, char *line)
 	}
 
 	while (message->body_whitelines--) {
-		if (EVP_DigestUpdate(message->dctx, "\r\n", 2) == 0) {
-			sign_errx(message, "Can't update hash context");
-			return;
-		}
+		if (EVP_DigestUpdate(message->dctx, "\r\n", 2) == 0)
+			osmtpd_errx(1, "EVP_DigestUpdate");
 	}
 	message->body_whitelines = 0;
 	message->has_body = 1;
 
 	if (EVP_DigestUpdate(message->dctx, line, linelen) == 0 ||
-	    EVP_DigestUpdate(message->dctx, "\r\n", 2) == 0) {
-		sign_errx(message, "Can't update hash context");
-		return;
-	}
+	    EVP_DigestUpdate(message->dctx, "\r\n", 2) == 0)
+		osmtpd_errx(1, "EVP_DigestUpdate");
 }
 
 const char *
@@ -797,10 +756,8 @@ sign_sign(struct osmtpd_ctx *ctx)
 	char *tmp, *tmp2;
 	unsigned int digestsz;
 
-	if ((arc || seal) && message->arc_i < ARC_MIN_I) {
-		sign_errx(message, "Can't parse ACR-AR header");
+	if ((arc || seal) && message->arc_i < ARC_MIN_I)
 		goto fail;
-	}
 
 	if ((arc || seal) && !signature_printf(message,
 		"i=%d; a=%s-%s; s=%s; ",
@@ -830,15 +787,11 @@ sign_sign(struct osmtpd_ctx *ctx)
 		goto skip_seal;
 
 	if (canonbody == CANON_SIMPLE && !message->has_body) {
-		if (EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0) {
-			sign_errx(message, "Can't update hash context");
-			goto fail;
-		}
+		if (EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0)
+			osmtpd_errx(1, "EVP_DigestUpdate");
 	}
-	if (EVP_DigestFinal_ex(message->dctx, bdigest, &digestsz) == 0) {
-		sign_errx(message, "Can't finalize hash context");
-		goto fail;
-	}
+	if (EVP_DigestFinal_ex(message->dctx, bdigest, &digestsz) == 0)
+		osmtpd_errx(1, "EVP_DigestFinal_ex");
 	EVP_EncodeBlock(digest, bdigest, digestsz);
 	if (!signature_printf(message, "bh=%s; h=", digest))
 		goto fail;
@@ -850,16 +803,11 @@ skip_seal:
 	EVP_MD_CTX_reset(message->dctx);
 	if (!sephash) {
 		if (EVP_DigestSignInit(message->dctx, NULL, hash_md, NULL,
-		    pkey) != 1) {
-			sign_errx(message, "Failed to initialize signature "
-			    "context");
-			goto fail;
-		}
+		    pkey) != 1)
+			osmtpd_errx(1, "EVP_DigestSignInit");
 	} else {
-		if (EVP_DigestInit_ex(message->dctx, hash_md, NULL) != 1) {
-			sign_errx(message, "Failed to initialize hash context");
-			goto fail;
-		}
+		if (EVP_DigestInit_ex(message->dctx, hash_md, NULL) != 1)
+			osmtpd_errx(1, "EVP_DigestInit_ex");
 	}
 	for (i--; i >= 0; i--) {
 		if (!sephash) {
@@ -867,19 +815,13 @@ skip_seal:
 			    message->headers[i],
 			    strlen(message->headers[i])) != 1 ||
 			    EVP_DigestSignUpdate(message->dctx, "\r\n",
-			    2) <= 0) {
-				sign_errx(message, "Failed to update signature "
-				    "context");
-				goto fail;
-			}
+			    2) <= 0)
+				osmtpd_errx(1, "EVP_DigestSignUpdate");
 		} else {
 			if (EVP_DigestUpdate(message->dctx, message->headers[i],
 			    strlen(message->headers[i])) != 1 ||
-			    EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0) {
-				sign_errx(message, "Failed to update digest "
-				    "context");
-				goto fail;
-			}
+			    EVP_DigestUpdate(message->dctx, "\r\n", 2) <= 0)
+				osmtpd_errx(1, "EVP_DigestSignUpdate");
 		}
 		if ((tsdomain = sign_domain_select(message, message->headers[i])) != NULL)
 			sdomain = tsdomain;
@@ -901,73 +843,49 @@ skip_seal:
 		goto fail;
 	if (!signature_normalize(message))
 		goto fail;
-	if ((tmp = strdup(message->signature.signature)) == NULL) {
-		sign_err(message, "Can't create signature");
-		goto fail;
-	}
+	if ((tmp = strdup(message->signature.signature)) == NULL)
+		osmtpd_err(1, "malloc");
 	sign_parse_header(message, tmp, 1);
 	if (!sephash) {
 		if (EVP_DigestSignUpdate(message->dctx, tmp,
-		    strlen(tmp)) != 1) {
-			sign_errx(message, "Failed to update signature "
-			    "context");
-			goto fail;
-		}
+		    strlen(tmp)) != 1)
+			osmtpd_errx(1, "EVP_DigestSignUpdate");
 	} else {
-		if (EVP_DigestUpdate(message->dctx, tmp, strlen(tmp)) != 1) {
-			sign_errx(message, "Failed to update digest context");
-			goto fail;
-		}
+		if (EVP_DigestUpdate(message->dctx, tmp, strlen(tmp)) != 1)
+			osmtpd_errx(1, "EVP_DigestUpdate");
 	}
 	free(tmp);
 	if (!sephash) {
-		if (EVP_DigestSignFinal(message->dctx, NULL, &linelen) != 1) {
-			sign_errx(message, "Can't finalize signature context");
-			goto fail;
-		}
+		if (EVP_DigestSignFinal(message->dctx, NULL, &linelen) != 1)
+			osmtpd_errx(1, "EVP_DigestSignFinal");
 #ifdef HAVE_ED25519
 	} else {
 		if (EVP_DigestFinal_ex(message->dctx, bdigest,
-		    &digestsz) != 1) {
-			sign_errx(message, "Can't finalize hash context");
-			goto fail;
-		}
+		    &digestsz) != 1)
+			osmtpd_errx(1, "EVP_DigestFinal_ex");
 		EVP_MD_CTX_reset(message->dctx);
 		if (EVP_DigestSignInit(message->dctx, NULL, NULL, NULL,
-		    pkey) != 1) {
-			sign_errx(message, "Failed to initialize signature "
-			    "context");
-			goto fail;
-		}
+		    pkey) != 1)
+			osmtpd_errx(1, "EVP_DigestSignInit");
 		if (EVP_DigestSign(message->dctx, NULL, &linelen, bdigest,
-		    digestsz) != 1) {
-			sign_errx(message, "Failed to finalize signature");
-			goto fail;
-		}
+		    digestsz) != 1)
+			osmtpd_errx(1, "EVP_DigestSign");
 #endif
 	}
-	if ((tmp = malloc(linelen)) == NULL) {
-		sign_err(message, "Can't allocate space for signature");
-		goto fail;
-	}
+	if ((tmp = malloc(linelen)) == NULL)
+		osmtpd_err(1, "malloc");
 	if (!sephash) {
-		if (EVP_DigestSignFinal(message->dctx, tmp, &linelen) != 1) {
-			sign_errx(message, "Failed to finalize signature");
-			goto fail;
-		}
+		if (EVP_DigestSignFinal(message->dctx, tmp, &linelen) != 1)
+			osmtpd_errx(1, "EVP_DigestSignFinal");
 #ifdef HAVE_ED25519
 	} else {
 		if (EVP_DigestSign(message->dctx, tmp, &linelen, bdigest,
-		    digestsz) != 1) {
-			sign_errx(message, "Failed to finalize signature");
-			goto fail;
-		}
+		    digestsz) != 1)
+			osmtpd_errx(1, "EVP_DigestSign");
 #endif
 	}
-	if ((b = malloc((((linelen + 2) / 3) * 4) + 1)) == NULL) {
-		sign_err(message, "Can't create signature");
-		goto fail;
-	}
+	if ((b = malloc((((linelen + 2) / 3) * 4) + 1)) == NULL)
+		osmtpd_err(1, "malloc");
 	EVP_EncodeBlock(b, tmp, linelen);
 	free(tmp);
 	signature_printf(message, "%s\r\n", b);
@@ -1085,14 +1003,11 @@ signature_printheader(struct message *message, const char *header)
 	len = strlen(header);
 	if ((len + 3) * 3 < len) {
 		errno = EOVERFLOW;
-		sign_err(message, "Can't add z-component to header");
 		return 0;
 	}
 	if ((len + 3) * 3 > size) {
-		if ((tmp = reallocarray(fmtheader, 3, len + 3)) == NULL) {
-			sign_err(message, "Can't add z-component to header");
-			return 0;
-		}
+		if ((tmp = reallocarray(fmtheader, 3, len + 3)) == NULL)
+			osmtpd_err(1, "malloc");
 		fmtheader = tmp;
 		size = (len + 1) * 3;
 	}
@@ -1147,13 +1062,8 @@ sign_domain_select(struct message *message, char *from)
 	char *mdomain0, *mdomain;
 	size_t i;
 
-	if ((mdomain = mdomain0 = osmtpd_mheader_from_domain(from)) == NULL) {
-		if (errno != EINVAL) {
-			sign_errx(message, "Couldn't parse from header");
-			return NULL;
-		}
+	if ((mdomain = mdomain0 = osmtpd_mheader_from_domain(from)) == NULL)
 		return NULL;
-	}
 
 	while (mdomain != NULL && mdomain[0] != '\0') {
 		for (i = 0; i < ndomains; i++) {
@@ -1178,10 +1088,8 @@ signature_need(struct message *message, size_t len)
 	if (sig->len + len < sig->size)
 		return 1;
 	sig->size = (((len + sig->len) / 512) + 1) * 512;
-	if ((tmp = realloc(sig->signature, sig->size)) == NULL) {
-		sign_err(message, "No room for signature");
-		return 0;
-	}
+	if ((tmp = realloc(sig->signature, sig->size)) == NULL)
+		osmtpd_err(1, "malloc");
 	sig->signature = tmp;
 	return 1;
 }
