@@ -59,7 +59,6 @@ struct message {
 	size_t body_whitelines;
 	int has_body;
 	struct signature signature;
-	int err;
 	EVP_MD_CTX *dctx;
 	struct osmtpd_ctx *ctx;
 };
@@ -155,7 +154,6 @@ void usage(void);
 void sign_adddomain(char *);
 void sign_headers_set(char *);
 void sign_dataline(struct osmtpd_ctx *, const char *);
-void sign_commit(struct osmtpd_ctx *);
 void *message_new(struct osmtpd_ctx *);
 void message_free(struct osmtpd_ctx *, void *);
 void sign_parse_header(struct message *, char *, int);
@@ -311,7 +309,6 @@ main(int argc, char *argv[])
 		osmtpd_errx(1, "Key is not of type %s", cryptalg);
 
 	osmtpd_register_filter_dataline(sign_dataline);
-	osmtpd_register_filter_commit(sign_commit);
 	osmtpd_local_message(message_new, message_free);
 	osmtpd_run();
 
@@ -334,12 +331,6 @@ sign_dataline(struct osmtpd_ctx *ctx, const char *line)
 	struct message *message = ctx->local_message;
 	char *linedup;
 	size_t linelen;
-
-	if (message->err) {
-		if (line[0] == '.' && line[1] =='\0')
-			osmtpd_filter_dataline(ctx, ".");
-		return;
-	}
 
 	linelen = strlen(line);
 	if (fprintf(message->origf, "%s\n", line) < (int) linelen)
@@ -369,17 +360,6 @@ sign_dataline(struct osmtpd_ctx *ctx, const char *line)
 	}
 }
 
-void
-sign_commit(struct osmtpd_ctx *ctx)
-{
-	struct message *message = ctx->local_message;
-
-	if (message->err)
-		osmtpd_filter_disconnect(ctx, "Internal server error");
-	else
-		osmtpd_filter_proceed(ctx);
-}
-
 void *
 message_new(struct osmtpd_ctx *ctx)
 {
@@ -403,7 +383,6 @@ message_new(struct osmtpd_ctx *ctx)
 	message->signature.signature = NULL;
 	message->signature.size = 0;
 	message->signature.len = 0;
-	message->err = 0;
 
 	if (!arc && !seal && !signature_printf(message,
 	    "DKIM-Signature: v=%s; a=%s-%s; c=%s/%s; s=%s; ", "1",
