@@ -161,11 +161,11 @@ void sign_parse_body(struct message *, char *);
 const char *ar_chain_status2str(enum ar_chain_status);
 void sign_sign(struct osmtpd_ctx *);
 int signature_printheader(struct message *, const char *);
-int signature_printf(struct message *, char *, ...)
+void signature_printf(struct message *, char *, ...)
 	__attribute__((__format__ (printf, 2, 3)));
-int signature_normalize(struct message *);
+void signature_normalize(struct message *);
 const char *sign_domain_select(struct message *, char *);
-int signature_need(struct message *, size_t);
+void signature_need(struct message *, size_t);
 int sign_sign_init(struct message *);
 
 int
@@ -346,9 +346,8 @@ sign_dataline(struct osmtpd_ctx *ctx, const char *line)
 		sign_parse_header(message, linedup, 0);
 		free(linedup);
 	} else if (linelen == 0 && message->parsing_headers) {
-		if (!arc && !seal && addheaders > 0 &&
-			!signature_printf(message, "; "))
-			return;
+		if (!arc && !seal && addheaders > 0)
+			signature_printf(message, "; ");
 		message->parsing_headers = 0;
 	} else if (!seal) {
 		if (line[0] == '.')
@@ -384,20 +383,18 @@ message_new(struct osmtpd_ctx *ctx)
 	message->signature.size = 0;
 	message->signature.len = 0;
 
-	if (!arc && !seal && !signature_printf(message,
-	    "DKIM-Signature: v=%s; a=%s-%s; c=%s/%s; s=%s; ", "1",
-	    cryptalg, hashalg,
-	    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
-	    canonbody == CANON_SIMPLE ? "simple" : "relaxed", selector))
-		goto fail;
-	if (seal && !signature_printf(message, "ARC-Seal: "))
-		goto fail;
-	if (arc &&
-		!signature_printf(message, "ARC-Message-Signature: "))
-		goto fail;
-	if (!arc && !seal && addheaders > 0 &&
-		!signature_printf(message, "z="))
-		goto fail;
+	if (!arc && !seal)
+		signature_printf(message,
+		    "DKIM-Signature: v=%s; a=%s-%s; c=%s/%s; s=%s; ", "1",
+		    cryptalg, hashalg,
+		    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
+		    canonbody == CANON_SIMPLE ? "simple" : "relaxed", selector);
+	if (seal)
+		signature_printf(message, "ARC-Seal: ");
+	if (arc)
+		signature_printf(message, "ARC-Message-Signature: ");
+	if (!arc && !seal && addheaders > 0)
+		signature_printf(message, "z=");
 
 	if ((message->dctx = EVP_MD_CTX_new()) == NULL)
 		osmtpd_errx(1, "EVP_MD_CTX_new");
@@ -405,9 +402,6 @@ message_new(struct osmtpd_ctx *ctx)
 		osmtpd_errx(1, "EVP_DigestInit_ex");
 
 	return message;
-fail:
-	message_free(ctx, message);
-	return NULL;
 }
 
 void
@@ -735,32 +729,35 @@ sign_sign(struct osmtpd_ctx *ctx)
 	char *tmp, *tmp2;
 	unsigned int digestsz;
 
-	if ((arc || seal) && message->arc_i < ARC_MIN_I)
-		goto fail;
+	if ((arc || seal) && message->arc_i < ARC_MIN_I) {
+		fprintf(stderr, "%016"PRIx64
+			" skip due to missed or invalid"
+			" ARC-Authentication-Results\n",
+			ctx->reqid);
+		goto skip_sign;
+	}
 
-	if ((arc || seal) && !signature_printf(message,
-		"i=%d; a=%s-%s; s=%s; ",
-		message->arc_i, cryptalg, hashalg, selector))
-		goto fail;
+	if (arc || seal)
+		signature_printf(message,
+		    "i=%d; a=%s-%s; s=%s; ",
+		    message->arc_i, cryptalg, hashalg, selector);
 
-	if (arc && !signature_printf(message, "c=%s/%s; ",
-	    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
-	    canonbody == CANON_SIMPLE ? "simple" : "relaxed"))
-		goto fail;
+	if (arc)
+		signature_printf(message, "c=%s/%s; ",
+		    canonheader == CANON_SIMPLE ? "simple" : "relaxed",
+		    canonbody == CANON_SIMPLE ? "simple" : "relaxed");
 
-	if (seal && !signature_printf(message, "cv=%s; ",
-		ar_chain_status2str(message->arc_cv)))
-		goto fail;
+	if (seal)
+		signature_printf(message, "cv=%s; ",
+		    ar_chain_status2str(message->arc_cv));
 
 	if (addtime || addexpire)
 		now = time(NULL);
-	if (addtime && !signature_printf(message, "t=%lld; ",
-	    (long long)now))
-		goto fail;
-	if (!seal && addexpire != 0 &&
-		!signature_printf(message, "x=%lld; ",
-	    now + addexpire < now ? INT64_MAX : now + addexpire))
-		goto fail;
+	if (addtime)
+		signature_printf(message, "t=%lld; ", (long long)now);
+	if (!seal && addexpire != 0)
+		signature_printf(message, "x=%lld; ",
+		    now + addexpire < now ? INT64_MAX : now + addexpire);
 
 	if(seal)
 		goto skip_seal;
@@ -772,8 +769,7 @@ sign_sign(struct osmtpd_ctx *ctx)
 	if (EVP_DigestFinal_ex(message->dctx, bdigest, &digestsz) == 0)
 		osmtpd_errx(1, "EVP_DigestFinal_ex");
 	EVP_EncodeBlock(digest, bdigest, digestsz);
-	if (!signature_printf(message, "bh=%s; h=", digest))
-		goto fail;
+	signature_printf(message, "bh=%s; h=", digest);
 
 skip_seal:
 	/* Reverse order for ease of use of RFC6367 section 5.4.2 */
@@ -811,17 +807,16 @@ skip_seal:
 			tmp[0] = tolower(tmp[0]);
 		}
 		tmp[0] = '\0';
-		if (!seal && !signature_printf(message, "%s%s",
-		    message->headers[i + 1] == NULL  ? "" : ":",
-		    message->headers[i]))
-			goto fail;
+		if (!seal)
+			signature_printf(message, "%s%s",
+			    message->headers[i + 1] == NULL  ? "" : ":",
+			    message->headers[i]);
 	}
-	if (!seal && !signature_printf(message, "; d=%s; b=", sdomain))
-		goto fail;
-	if (seal && !signature_printf(message, "d=%s; b=", sdomain))
-		goto fail;
-	if (!signature_normalize(message))
-		goto fail;
+	if (!seal)
+		signature_printf(message, "; d=%s; b=", sdomain);
+	if (seal)
+		signature_printf(message, "d=%s; b=", sdomain);
+	signature_normalize(message);
 	if ((tmp = strdup(message->signature.signature)) == NULL)
 		osmtpd_err(1, "malloc");
 	sign_parse_header(message, tmp, 1);
@@ -876,6 +871,7 @@ skip_seal:
 		osmtpd_filter_dataline(ctx, "%s", tmp);
 		tmp = tmp2 + 2;
 	}
+skip_sign:
 	tmp = NULL;
 	linelen = 0;
 	rewind(message->origf);
@@ -885,11 +881,9 @@ skip_seal:
 	}
 	free(tmp);
 	return;
-fail:
-	osmtpd_filter_dataline(ctx, ".");
 }
 
-int
+void
 signature_normalize(struct message *message)
 {
 	size_t i;
@@ -925,9 +919,7 @@ signature_normalize(struct message *message)
 			    skip++)
 				continue;
 			skip -= checkpoint + 1;
-			if (!signature_need(message,
-			    skip > 3 ? 0 : 3 - skip + 1))
-				return 0;
+			signature_need(message, skip > 3 ? 0 : 3 - skip + 1);
 			sig = message->signature.signature;
 
 			memmove(sig + checkpoint + 3,
@@ -967,7 +959,6 @@ signature_normalize(struct message *message)
 				tag = sig[i];
 		}
 	}
-	return 1;
 }
 
 int
@@ -1009,10 +1000,11 @@ signature_printheader(struct message *message, const char *header)
 	(void) sprintf(fmtheader + j, "=%02hhX=%02hhX", (unsigned char) '\r',
 	    (unsigned char) '\n');
 
-	return signature_printf(message, "%s", fmtheader);
+	signature_printf(message, "%s", fmtheader);
+	return 1;
 }
 
-int
+void
 signature_printf(struct message *message, char *fmt, ...)
 {
 	struct signature *sig = &(message->signature);
@@ -1023,8 +1015,7 @@ signature_printf(struct message *message, char *fmt, ...)
 	if ((len = vsnprintf(sig->signature + sig->len, sig->size - sig->len,
 	    fmt, ap)) >= sig->size - sig->len) {
 		va_end(ap);
-		if (!signature_need(message, len + 1))
-			return 0;
+		signature_need(message, len + 1);
 		va_start(ap, fmt);
 		if ((len = vsnprintf(sig->signature + sig->len,
 		    sig->size - sig->len, fmt, ap)) >= sig->size - sig->len)
@@ -1032,7 +1023,6 @@ signature_printf(struct message *message, char *fmt, ...)
 	}
 	sig->len += len;
 	va_end(ap);
-	return 1;
 }
 
 const char *
@@ -1058,19 +1048,19 @@ sign_domain_select(struct message *message, char *from)
 	return NULL;
 }
 
-int
+void
 signature_need(struct message *message, size_t len)
 {
 	struct signature *sig = &(message->signature);
 	char *tmp;
 
 	if (sig->len + len < sig->size)
-		return 1;
+		return;
 	sig->size = (((len + sig->len) / 512) + 1) * 512;
 	if ((tmp = realloc(sig->signature, sig->size)) == NULL)
 		osmtpd_err(1, "malloc");
 	sig->signature = tmp;
-	return 1;
+	return;
 }
 
 __dead void
